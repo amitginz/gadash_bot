@@ -145,7 +145,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"שגיאה בשליחת הקובץ: {e}")
 
-#app = ApplicationBuilder().token("7064856702:AAFPAcFZaudhYjQ37kiDEr3RB2-kLdpz6ps").build()
+
 app = TOKEN
 conv_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start)],
