@@ -1,4 +1,3 @@
-
 import os
 import pandas as pd
 import gspread
@@ -8,7 +7,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters
 )
-from datetime import date
+from datetime import date, timedelta
 
 TOKEN = os.getenv("BOT_TOKEN")
 EXCEL_FILE = "works.xlsx"
@@ -16,7 +15,7 @@ SHEET_NAME = "Gadash Data"
 
 MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM = range(10)
 START_KEYBOARD = [["כן, רוצה להתחיל"], ["לא, תודה"]]
-MENU_KEYBOARD = [["הזן עבודה חדשה"], ["ייצא קובץ"], ["סיים"]]
+MENU_KEYBOARD = [["הזן עבודה חדשה"], ["שלח דוח שבועי", "ייצא קובץ"], ["חפש עבודות"], ["סיים"]]
 
 def init_gsheet():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -35,18 +34,84 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "כן, רוצה להתחיל" or text == "הזן עבודה חדשה":
         await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=ReplyKeyboardRemove())
         return CLIENT
+    elif text == "שלח דוח שבועי":
+        await send_weekly_report(update)
+        return MENU
     elif text == "ייצא קובץ":
         if os.path.exists(EXCEL_FILE):
             await update.message.reply_document(open(EXCEL_FILE, "rb"))
         else:
             await update.message.reply_text("⚠️ אין קובץ נתונים לשיתוף.")
         return MENU
+    elif text == "חפש עבודות":
+        await update.message.reply_text("הכנס שם לקוח או השאר ריק:")
+        return 100  # SEARCH_CLIENT
     elif text == "סיים" or text == "לא, תודה":
         await update.message.reply_text("להתראות 👋", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
     else:
         await update.message.reply_text("בחר בבקשה מהתפריט.")
         return MENU
+
+async def send_weekly_report(update: Update):
+    try:
+        df = pd.read_excel(EXCEL_FILE)
+        today = date.today()
+        last_week = today - timedelta(days=7)
+        df['תאריך'] = pd.to_datetime(df['תאריך'], errors='coerce')
+        recent = df[df['תאריך'] >= pd.to_datetime(last_week)]
+
+        if recent.empty:
+            await update.message.reply_text("לא נמצאו עבודות בשבוע האחרון.")
+            return
+
+        temp_file = "weekly_report.xlsx"
+        recent.to_excel(temp_file, index=False)
+        await update.message.reply_document(open(temp_file, "rb"), filename="דוח_שבועי.xlsx")
+    except Exception as e:
+        await update.message.reply_text(f"שגיאה בשליחת הדוח: {e}")
+
+# חיפוש לפי לקוח / תאריכים
+async def search_client(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["search_client"] = update.message.text.strip()
+    await update.message.reply_text("תאריך התחלה? (YYYY-MM-DD או דלג)")
+    return 101
+
+async def search_start_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    input_text = update.message.text.strip()
+    if input_text.lower() != "דלג":
+        context.user_data["search_start"] = input_text
+    await update.message.reply_text("תאריך סיום? (YYYY-MM-DD או דלג)")
+    return 102
+
+async def search_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    input_text = update.message.text.strip()
+    if input_text.lower() != "דלג":
+        context.user_data["search_end"] = input_text
+
+    try:
+        df = pd.read_excel(EXCEL_FILE)
+        df['תאריך'] = pd.to_datetime(df['תאריך'], errors='coerce')
+
+        if "search_client" in context.user_data and context.user_data["search_client"]:
+            df = df[df['שם לקוח'].str.contains(context.user_data["search_client"], case=False, na=False)]
+
+        if "search_start" in context.user_data:
+            df = df[df['תאריך'] >= pd.to_datetime(context.user_data["search_start"])]
+
+        if "search_end" in context.user_data:
+            df = df[df['תאריך'] <= pd.to_datetime(context.user_data["search_end"])]
+
+        if df.empty:
+            await update.message.reply_text("לא נמצאו תוצאות לחיפוש שלך.")
+        else:
+            file_path = "תוצאות_חיפוש.xlsx"
+            df.to_excel(file_path, index=False)
+            await update.message.reply_document(open(file_path, "rb"))
+    except Exception as e:
+        await update.message.reply_text(f"שגיאה בחיפוש: {e}")
+
+    return MENU
 
 async def client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["שם לקוח"] = update.message.text
@@ -92,7 +157,6 @@ async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return CONFIRM
 
-
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         row = context.user_data.copy()
@@ -135,6 +199,9 @@ conv_handler = ConversationHandler(
         OPERATOR: [MessageHandler(filters.TEXT, operator)],
         NOTE: [MessageHandler(filters.TEXT, note)],
         CONFIRM: [MessageHandler(filters.TEXT, confirm)],
+        100: [MessageHandler(filters.TEXT, search_client)],
+        101: [MessageHandler(filters.TEXT, search_start_date)],
+        102: [MessageHandler(filters.TEXT, search_end_date)]
     },
     fallbacks=[CommandHandler("cancel", cancel)],
 )
