@@ -12,6 +12,7 @@ from datetime import date, timedelta
 TOKEN = os.getenv("BOT_TOKEN")
 EXCEL_FILE = "works.xlsx"
 SHEET_NAME = "Gadash Data"
+ADMIN_IDS = [123456789]  # החלף במספר המשתמש שלך בטלגרם
 
 MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM = range(10)
 START_KEYBOARD = [["כן, רוצה להתחיל"], ["לא, תודה"]]
@@ -23,12 +24,24 @@ def init_gsheet():
     client = gspread.authorize(creds)
     sheet = client.open(SHEET_NAME).sheet1
     return sheet
-
+async def clear_sheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("רק מנהל יכול לבצע פעולה זו.")
+        return
+    try:
+        sheet = init_gsheet()
+        sheet.batch_clear(["A2:Z1000"])
+        await update.message.reply_text("🧼 הגיליון נוקה בהצלחה.")
+    except Exception as e:
+        await update.message.reply_text(f"שגיאה בניקוי הגיליון: {e}")
+        
 async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("שלום! רוצה להתחיל להזין עבודה חדשה?",
         reply_markup=ReplyKeyboardMarkup(START_KEYBOARD, one_time_keyboard=True, resize_keyboard=True))
     return MENU
 
+        
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "כן, רוצה להתחיל" or text == "הזן עבודה חדשה":
