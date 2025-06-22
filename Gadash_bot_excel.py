@@ -6,7 +6,7 @@ from telegram.ext import (
 )
 from datetime import date
 import os
-import 
+import openpyxl
 TOKEN = os.getenv("BOT_TOKEN")  # קבלת הטוקן ממשתני סביבה
 DATA_FILE = "works.xlsx"
 
