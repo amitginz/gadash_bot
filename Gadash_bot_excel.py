@@ -86,8 +86,11 @@ async def operator(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["הערות"] = update.message.text
-    summary = "\n".join(f"{k}: {v}" for k, v in context.user_data.items())
-    await update.message.reply_text(f"אישור:
+   summary = "\n".join(f"{k}: {v}" for k, v in context.user_data.items())
+await update.message.reply_text(
+    f"אישור:\n{summary}\n\nשלח 'כן' לשמירה או 'לא' לביטול."
+)
+
 {summary}
 
 לשלוח 'כן' לשמירה או 'לא' לביטול")
