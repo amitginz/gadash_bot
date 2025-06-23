@@ -83,4 +83,6 @@
 - צור Google Sheet בשם `Gadash Data`
 - שתף אותו עם האימייל שבקובץ `credentials.json` (נראה כמו: `xyz@project.iam.gserviceaccount.com`)
 - ודא הרשאת **עורך**
+- 
+![Screenshot 2025-06-23 111144](https://github.com/user-attachments/assets/73e26a0b-7b58-45d5-b84a-2f025342170d)
 
