@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8" />
+    <title>הוספת רשומה חדשה - דוח עבודות גד"ש</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('index') }}">גד"ש - דוחות עבודות</a>
+  </div>
+</nav>
+
+<div class="container">
+  <h2 class="mb-4 text-center">➕ הוספת רשומה חדשה</h2>
+
+  <form method="post" action="{{ url_for('add') }}" class="mx-auto" style="max-width: 600px;">
+    <div class="mb-3">
+      <label for="שם לקוח" class="form-label">שם לקוח</label>
+      <input type="text" class="form-control" id="שם לקוח" name="שם לקוח" required />
+    </div>
+
+    <div class="mb-3">
+      <label for="תאריך" class="form-label">תאריך</label>
+      <input type="date" class="form-control" id="תאריך" name="תאריך" required />
+    </div>
+
+    <div class="mb-3">
+      <label for="עבודה" class="form-label">עבודה</label>
+      <input type="text" class="form-control" id="עבודה" name="עבודה" required />
+    </div>
+
+    <div class="mb-3">
+      <label for="שם חלקה" class="form-label">שם חלקה</label>
+      <input type="text" class="form-control" id="שם חלקה" name="שם חלקה" />
+    </div>
+
+    <div class="mb-3">
+      <label for="כמות" class="form-label">כמות</label>
+      <input type="number" class="form-control" id="כמות" name="כמות" min="0" />
+    </div>
+
+    <div class="mb-3">
+      <label for="כלי" class="form-label">כלי</label>
+      <input type="text" class="form-control" id="כלי" name="כלי" />
+    </div>
+
+    <div class="mb-3">
+      <label for="מפעיל" class="form-label">מפעיל</label>
+      <input type="text" class="form-control" id="מפעיל" name="מפעיל" />
+    </div>
+
+    <div class="mb-3">
+      <label for="הערות" class="form-label">הערות</label>
+      <textarea class="form-control" id="הערות" name="הערות" rows="3"></textarea>
+    </div>
+
+    <div class="d-flex justify-content-between">
+      <a href="{{ url_for('index') }}" class="btn btn-secondary">בטל</a>
+      <button type="submit" class="btn btn-primary">שמור רשומה</button>
+    </div>
+  </form>
+</div>
+
+</body>
+</html>
