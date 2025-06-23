@@ -197,6 +197,10 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("ביטול התהליך.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
+async def unknown(update, context):
+    await update.message.reply_text("לא הבנתי, נסה להשתמש בתפריט.")
+
+app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 app = ApplicationBuilder().token(TOKEN).build()
 conv_handler = ConversationHandler(
