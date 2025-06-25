@@ -16,45 +16,49 @@
 <div class="container">
   <h2 class="mb-4 text-center">➕ הוספת רשומה חדשה</h2>
 
+  {% if success %}
+  <div class="alert alert-success text-center">✅ הרשומה נוספה בהצלחה!</div>
+  {% endif %}
+
   <form method="post" action="{{ url_for('add') }}" class="mx-auto" style="max-width: 600px;">
     <div class="mb-3">
       <label for="שם לקוח" class="form-label">שם לקוח</label>
-      <input type="text" class="form-control" id="שם לקוח" name="שם לקוח" required />
+      <input type="text" class="form-control" id="שם לקוח" name="שם לקוח" required placeholder="הכנס שם לקוח" />
     </div>
 
     <div class="mb-3">
       <label for="תאריך" class="form-label">תאריך</label>
-      <input type="date" class="form-control" id="תאריך" name="תאריך" required />
+      <input type="date" class="form-control" id="תאריך" name="תאריך" required value="{{ today }}" />
     </div>
 
     <div class="mb-3">
       <label for="עבודה" class="form-label">עבודה</label>
-      <input type="text" class="form-control" id="עבודה" name="עבודה" required />
+      <input type="text" class="form-control" id="עבודה" name="עבודה" required placeholder="סוג העבודה (למשל חריש)" />
     </div>
 
     <div class="mb-3">
       <label for="שם חלקה" class="form-label">שם חלקה</label>
-      <input type="text" class="form-control" id="שם חלקה" name="שם חלקה" />
+      <input type="text" class="form-control" id="שם חלקה" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳" />
     </div>
 
     <div class="mb-3">
       <label for="כמות" class="form-label">כמות</label>
-      <input type="number" class="form-control" id="כמות" name="כמות" min="0" />
+      <input type="number" class="form-control" id="כמות" name="כמות" min="0" placeholder="כמות בדונם" />
     </div>
 
     <div class="mb-3">
       <label for="כלי" class="form-label">כלי</label>
-      <input type="text" class="form-control" id="כלי" name="כלי" />
+      <input type="text" class="form-control" id="כלי" name="כלי" placeholder="למשל טרקטור" />
     </div>
 
     <div class="mb-3">
       <label for="מפעיל" class="form-label">מפעיל</label>
-      <input type="text" class="form-control" id="מפעיל" name="מפעיל" />
+      <input type="text" class="form-control" id="מפעיל" name="מפעיל" placeholder="שם המפעיל" />
     </div>
 
     <div class="mb-3">
       <label for="הערות" class="form-label">הערות</label>
-      <textarea class="form-control" id="הערות" name="הערות" rows="3"></textarea>
+      <textarea class="form-control" id="הערות" name="הערות" rows="3" placeholder="הערות נוספות אם יש"></textarea>
     </div>
 
     <div class="d-flex justify-content-between">

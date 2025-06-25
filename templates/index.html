@@ -1,24 +1,40 @@
 <!DOCTYPE html>
 <html lang="he" dir="rtl">
 <head>
-    <meta charset="UTF-8" />
+    <meta charset="UTF-8">
     <title>דוח עבודות גד"ש</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
+<div class="container mt-4">
+    <h2 class="mb-4 text-center">📋 דוח עבודות - גד"ש</h2>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
-  <div class="container">
-    <a class="navbar-brand" href="#">גד"ש - דוחות עבודות</a>
-    <button class="btn btn-light" onclick="location.href='/add'">➕ הוסף עבודה חדשה</button>
-  </div>
-</nav>
+    <form method="get" class="row g-3 mb-4">
+        <div class="col-md-4">
+            <label class="form-label">שם לקוח</label>
+            <input type="text" name="client" class="form-control" placeholder="לדוג׳ אורי" value="{{ request.args.get('client', '') }}">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">תאריך</label>
+            <input type="date" name="date" class="form-control" value="{{ request.args.get('date', '') }}">
+        </div>
+        <div class="col-md-4 d-flex align-items-end gap-2">
+            <button type="submit" class="btn btn-primary w-50">🔎 סנן</button>
+            <a href="/" class="btn btn-secondary w-50">🔄 נקה</a>
+        </div>
+    </form>
 
-<div class="container">
-    <h2 class="mb-3 text-center">📋 דוח עבודות - גד"ש</h2>
-
-    <div class="mb-3">
-      <input id="searchInput" type="text" class="form-control" placeholder="חפש בטבלה..." />
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            {% if total_count is defined %}
+            <span class="text-muted">מציג {{ records|length }} מתוך {{ total_count }} עבודות</span>
+            {% endif %}
+        </div>
+        <div class="btn-group">
+            <a href="/add" class="btn btn-success">➕ הוסף עבודה</a>
+            <a href="/export" class="btn btn-outline-primary">📤 ייצא ל-Excel</a>
+            <a href="/import" class="btn btn-outline-secondary">📥 ייבא מקובץ</a>
+        </div>
     </div>
 
     {% if records %}
@@ -40,6 +56,7 @@
                     {% endfor %}
                     <td class="text-center">
                         <a href="/edit/{{ loop.index0 }}" class="btn btn-sm btn-outline-primary">ערוך</a>
+                        <a href="/delete/{{ loop.index0 }}" class="btn btn-sm btn-outline-danger ms-2">🗑️</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -50,18 +67,5 @@
     <p class="text-center">אין נתונים להצגה.</p>
     {% endif %}
 </div>
-
-<script>
-  const searchInput = document.getElementById('searchInput');
-  searchInput.addEventListener('keyup', function () {
-    const filter = this.value.toLowerCase();
-    const rows = document.querySelectorAll('tbody tr');
-    rows.forEach(row => {
-      const text = row.textContent.toLowerCase();
-      row.style.display = text.includes(filter) ? '' : 'none';
-    });
-  });
-</script>
-
 </body>
 </html>
