@@ -169,7 +169,7 @@ async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def start_telegram_bot():
 
     token = os.getenv("BOT_TOKEN")
-    token = "7064856702:AAFPAcFZaudhYjQ37kiDEr3RB2-kLdpz6ps"
+   
     app = ApplicationBuilder().token(token).build()
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start)],
