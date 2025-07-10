@@ -299,12 +299,8 @@ def import_data():
     return render_template("import.html")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import threading
-
-    # הרץ את הבוט בת׳רד נפרד
     bot_thread = threading.Thread(target=start_telegram_bot)
     bot_thread.start()
-
-    # הרץ את השרת Flask
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
