@@ -302,10 +302,16 @@ def import_data():
 if __name__ == "__main__":
     import threading
 
-    flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))))
+    # הפעלת Flask ב-thread נפרד
+    def run_flask():
+        app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+    flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
 
-if not token:
-    print("❌ BOT_TOKEN לא הוגדר, הבוט לא יפעל")
-else:
-    start_telegram_bot()
+    # הפעלת הבוט
+    token = os.getenv("BOT_TOKEN")
+    if not token:
+        print("❌ BOT_TOKEN לא הוגדר, הבוט לא יפעל")
+    else:
+        start_telegram_bot()
