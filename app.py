@@ -301,6 +301,8 @@ def import_data():
 
 if __name__ == "__main__":
     import threading
-    bot_thread = threading.Thread(target=start_telegram_bot)
-    bot_thread.start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+    flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))))
+    flask_thread.start()
+
+    start_telegram_bot()  # הפעל את הבוט כ-process הראשי
