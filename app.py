@@ -305,4 +305,7 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))))
     flask_thread.start()
 
-    start_telegram_bot()  # הפעל את הבוט כ-process הראשי
+if not token:
+    print("❌ BOT_TOKEN לא הוגדר, הבוט לא יפעל")
+else:
+    start_telegram_bot()
