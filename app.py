@@ -4,17 +4,14 @@ from datetime import date
 import gspread
 import asyncio
 from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters
 )
-from datetime import date
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")  # קבלת הטוקן ממשתני סביבה
-DATA_FILE = "works.xlsx"
 
 MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM = range(10)
 
@@ -26,6 +23,34 @@ MENU_KEYBOARD = [
     ["סיים"]
 ]
 
+# --- פונקציות גוגל שיטס ---
+
+def init_gsheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Gadash Data").sheet1
+    return sheet
+
+def load_data_from_gsheet():
+    try:
+        sheet = init_gsheet()
+        data = sheet.get_all_records()
+        df = pd.DataFrame(data)
+        return df
+    except Exception as e:
+        print(f"שגיאה בטעינת גוגל שיטס: {e}")
+        return pd.DataFrame()  # מחזיר DataFrame ריק במקרה של שגיאה
+
+def save_data_to_gsheet(df):
+    try:
+        sheet = init_gsheet()
+        sheet.clear()
+        sheet.update([df.columns.values.tolist()] + df.values.tolist())
+    except Exception as e:
+        print(f"שגיאה בשמירת גוגל שיטס: {e}")
+
+# --- בוט טלגרם ---
 
 async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -33,7 +58,6 @@ async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardMarkup(START_KEYBOARD, one_time_keyboard=True, resize_keyboard=True)
     )
     return MENU
-
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -54,12 +78,10 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("בחר אפשרות תקינה בבקשה.")
         return MENU
 
-
 async def client(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["שם לקוח"] = update.message.text
     await update.message.reply_text("מה התאריך? (YYYY-MM-DD או 'היום')")
     return DATE
-
 
 async def date_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text
@@ -74,36 +96,30 @@ async def date_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return TASK
 
-
 async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["עבודה"] = update.message.text
     await update.message.reply_text("מה שם החלקה?", reply_markup=ReplyKeyboardRemove())
     return FIELD
-
 
 async def field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["שם חלקה"] = update.message.text
     await update.message.reply_text("מה הכמות (למשל 30 דונם)?")
     return AMOUNT
 
-
 async def amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["כמות"] = update.message.text
     await update.message.reply_text("מה הכלי שבו השתמשת?")
     return TOOL
-
 
 async def tool(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["כלי"] = update.message.text
     await update.message.reply_text("מי המפעיל?")
     return OPERATOR
 
-
 async def operator(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["מפעיל"] = update.message.text
     await update.message.reply_text("הערות? (אם אין, כתוב - )")
     return NOTE
-
 
 async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["הערות"] = update.message.text
@@ -111,18 +127,13 @@ async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"לאישור שמירה:\n\n{summary}\n\nשלח 'כן' לשמירה או 'לא' לביטול.")
     return CONFIRM
 
-
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         row = context.user_data.copy()
         row["מזין"] = update.message.from_user.full_name
-        df = pd.DataFrame([row])
-        try:
-            existing = pd.read_excel(DATA_FILE)
-            df = pd.concat([existing, df], ignore_index=True)
-        except FileNotFoundError:
-            pass
-        df.to_excel(DATA_FILE, index=False)
+        df = load_data_from_gsheet()
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+        save_data_to_gsheet(df)
         await update.message.reply_text("✅ נשמר בהצלחה!")
     else:
         await update.message.reply_text("❌ בוטל.")
@@ -133,15 +144,13 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return MENU
 
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("ביטלת את הפעולה.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = pd.read_excel(DATA_FILE)
+        df = load_data_from_gsheet()
         if df.empty:
             await update.message.reply_text("הקובץ ריק כרגע.")
             return
@@ -150,26 +159,14 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for idx, row in last_entries.iterrows():
             message += f"\n— {row['תאריך']} | {row['עבודה']} | {row['שם חלקה']} | {row['כמות']} | {row['מזין']}"
         await update.message.reply_text(message)
-    except FileNotFoundError:
-        await update.message.reply_text("⚠️ הקובץ עדיין לא קיים.")
     except Exception as e:
         await update.message.reply_text(f"שגיאה: {e}")
 
-
 async def export(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not os.path.exists(DATA_FILE):
-            await update.message.reply_text("⚠️ הקובץ עדיין לא קיים.")
-            return
-        await update.message.reply_document(document=open(DATA_FILE, "rb"), filename="עבודות_גדש.xlsx")
-    except Exception as e:
-        await update.message.reply_text(f"שגיאה בשליחת הקובץ: {e}")
-
+    await update.message.reply_text("הייצוא לקובץ Excel עדיין לא נתמך עם Google Sheets. אפשר להוסיף בעתיד.")
 
 def start_telegram_bot():
-
     token = os.getenv("BOT_TOKEN")
-   
     app = ApplicationBuilder().token(token).build()
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start)],
@@ -187,22 +184,23 @@ def start_telegram_bot():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    # צור event loop חדש והגדר אותו ל-thread הנוכחי
     asyncio.set_event_loop(asyncio.new_event_loop())
     app.add_handler(conv_handler)
     app.run_polling()
 
+# --- Flask ---
 
 app = Flask(__name__)
-
 
 @app.route('/')
 def index():
     try:
-        df = pd.read_excel("works.xlsx")
+        df = load_data_from_gsheet()
+        if df.empty:
+            return "אין נתונים להצגה."
         df = df.sort_values(by="תאריך", ascending=False)
 
-        total_count = len(df)  # ⬅️ ספירה מלאה לפני סינון
+        total_count = len(df)
 
         client = request.args.get("client", "").strip()
         date_filter = request.args.get("date", "").strip()
@@ -216,70 +214,44 @@ def index():
     except Exception as e:
         return f"שגיאה בטעינת הקובץ: {e}"
 
-
-def init_gsheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    client = gspread.authorize(creds)
-    sheet = client.open("Gadash Data").sheet1
-    return sheet
-
-
 @app.route('/add', methods=["GET", "POST"])
 def add():
     if request.method == "POST":
-        df = pd.read_excel("works.xlsx")
-        new_row = {col: request.form.get(col, "") for col in df.columns}
+        df = load_data_from_gsheet()
+        new_row = {col: request.form.get(col, "") for col in df.columns} if not df.empty else request.form.to_dict()
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        df.to_excel("works.xlsx", index=False)
-
-        # ניסיון לשמור גם ל-Google Sheets
-        try:
-            sheet = init_gsheet()
-            sheet.append_row(list(new_row.values()))
-        except Exception as e:
-            print(f"שגיאה ב-Google Sheets: {e}")
+        save_data_to_gsheet(df)
 
         return redirect(url_for("index"))
 
     today = date.today().strftime("%Y-%m-%d")
     return render_template("add.html", today=today, success=True)
 
-
 @app.route('/edit/<int:row_id>', methods=["GET", "POST"])
 def edit(row_id):
-    df = pd.read_excel("works.xlsx")
+    df = load_data_from_gsheet()
 
-    # POST: עדכון ושמירה
     if request.method == "POST":
         try:
             for key in df.columns:
                 df.at[row_id, key] = request.form.get(key)
-            df.to_excel("works.xlsx", index=False)
+            save_data_to_gsheet(df)
             return redirect(url_for("index"))
         except Exception as e:
             return f"שגיאה בעדכון: {e}"
 
-    # GET: שליחה לתבנית edit.html
     try:
         row_data = df.iloc[row_id].to_dict()
         return render_template("edit.html", row=row_data, row_id=row_id)
     except Exception as e:
         return f"שגיאה בטעינת שורה: {e}"
 
-
 @app.route('/delete/<int:row_id>')
 def delete(row_id):
-    df = pd.read_excel("works.xlsx")
+    df = load_data_from_gsheet()
     df = df.drop(index=row_id).reset_index(drop=True)
-    df.to_excel("works.xlsx", index=False)
+    save_data_to_gsheet(df)
     return redirect(url_for("index"))
-
-
-@app.route("/export")
-def export():
-    return send_file("works.xlsx", as_attachment=True, download_name="דוח_גדש.xlsx")
-
 
 @app.route("/import", methods=["GET", "POST"])
 def import_data():
@@ -287,29 +259,28 @@ def import_data():
         file = request.files.get("file")
         if file and file.filename.endswith(".xlsx"):
             new_df = pd.read_excel(file)
-            try:
-                existing_df = pd.read_excel("works.xlsx")
-                df = pd.concat([existing_df, new_df], ignore_index=True)
-            except FileNotFoundError:
+            df = load_data_from_gsheet()
+            if df.empty:
                 df = new_df
-            df.to_excel("works.xlsx", index=False)
+            else:
+                df = pd.concat([df, new_df], ignore_index=True)
+            save_data_to_gsheet(df)
             return redirect("/")
         else:
             return "יש לבחור קובץ Excel תקני (.xlsx)"
     return render_template("import.html")
 
+# --- הפעלה ---
 
 if __name__ == "__main__":
     import threading
 
-    # הפעלת Flask ב-thread נפרד
     def run_flask():
         app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
 
-    # הפעלת הבוט
     token = os.getenv("BOT_TOKEN")
     if not token:
         print("❌ BOT_TOKEN לא הוגדר, הבוט לא יפעל")
