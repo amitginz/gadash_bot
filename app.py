@@ -9,7 +9,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler,
     ContextTypes, filters
 )
-import os
+import os, json
 
 TOKEN = os.getenv("BOT_TOKEN")  # קבלת הטוקן ממשתני סביבה
 
@@ -26,8 +26,12 @@ MENU_KEYBOARD = [
 # --- פונקציות גוגל שיטס ---
 
 def init_gsheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     sheet = client.open("Gadash Data").sheet1
     return sheet
