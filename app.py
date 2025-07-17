@@ -303,4 +303,4 @@ if __name__ == "__main__":
     import threading
     bot_thread = threading.Thread(target=start_telegram_bot)
     bot_thread.start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
