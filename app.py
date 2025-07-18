@@ -66,6 +66,19 @@ def load_data_from_gsheet():
         print(f"שגיאה בטעינת גוגל שיטס: {e}")
         return pd.DataFrame()
 
+def save_data_to_gsheet(df):
+    try:
+        sheet = init_gsheet()
+        sheet.clear()  # מנקה את הגיליון
+
+        # מעלה שורה עם הכותרות
+        sheet.append_row(df.columns.tolist())
+
+        # מעלה את הנתונים (רק הערכים, ללא כותרות)
+        if not df.empty:
+            sheet.append_rows(df.values.tolist())
+    except Exception as e:
+        print(f"שגיאה בשמירת גוגל שיטס: {e}")
 
 # --- בוט טלגרם ---
 
