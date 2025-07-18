@@ -44,9 +44,7 @@ def load_data_from_gsheet():
         df = pd.DataFrame(data)
         return df
     except Exception as e:
-        print(f"שגיאה בטעינת גוגל שיטס: {e}")
-        return pd.DataFrame()  # מחזיר DataFrame ריק במקרה של שגיאה
-
+        raise RuntimeError(f"שגיאה בטעינת גוגל שיטס: {e}")
 def save_data_to_gsheet(df):
     try:
         sheet = init_gsheet()
@@ -201,10 +199,7 @@ app = Flask(__name__)
 def index():
     try:
         df = load_data_from_gsheet()
-        if df.empty:
-            return "אין נתונים להצגה."
         df = df.sort_values(by="תאריך", ascending=False)
-
         total_count = len(df)
 
         client = request.args.get("client", "").strip()
@@ -217,7 +212,7 @@ def index():
 
         return render_template("index.html", records=df.to_dict(orient='records'), total_count=total_count)
     except Exception as e:
-        return f"שגיאה בטעינת הקובץ: {e}"
+        return f"שגיאה בטעינת הדף: {e}"
 
 @app.route('/add', methods=["GET", "POST"])
 def add():
