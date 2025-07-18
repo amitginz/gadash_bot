@@ -26,14 +26,28 @@ MENU_KEYBOARD = [
 # --- פונקציות גוגל שיטס ---
 
 def init_gsheet():
-    creds_dict = json.loads(os.environ["GOOGLE_CREDS"])
+    try:
+        creds_json = os.environ["GOOGLE_CREDS"]
+    except KeyError:
+        raise RuntimeError("⚠️ GOOGLE_CREDS לא מוגדר במשתני הסביבה.")
+
+    try:
+        creds_dict = json.loads(creds_json)
+    except json.JSONDecodeError:
+        raise RuntimeError("⚠️ GOOGLE_CREDS אינו JSON תקף.")
+
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    sheet = client.open("Gadash Data").sheet1
+
+    try:
+        sheet = client.open("Gadash Data").sheet1
+    except Exception as e:
+        raise RuntimeError(f"שגיאה בפתיחת הגיליון: {e}")
+
     return sheet
 
 
