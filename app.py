@@ -54,13 +54,13 @@ def init_gsheet():
 def load_data_from_gsheet():
     try:
         sheet = init_gsheet()
-        data = sheet.get_all_records()
-        df = pd.DataFrame(data)
-        print("עמודות ב-DataFrame:", df.columns.tolist())  # בדיקה
-        df.columns = df.columns.str.strip()  # מסיר רווחים
-        if "תאריך" not in df.columns:
-            print("העמודה 'תאריך' לא נמצאה!")
-            return pd.DataFrame()
+        all_values = sheet.get_all_values()
+        # נניח ששורת הכותרת היא שורה 1:
+        headers = all_values[0]
+        records = [dict(zip(headers, row)) for row in all_values[1:] if any(row)]
+        df = pd.DataFrame(records)
+        df.columns = df.columns.str.strip()
+        print("עמודות ב-DataFrame:", df.columns.tolist())
         return df
     except Exception as e:
         print(f"שגיאה בטעינת גוגל שיטס: {e}")
