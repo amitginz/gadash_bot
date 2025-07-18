@@ -298,6 +298,26 @@ def import_data():
         else:
             return "יש לבחור קובץ Excel תקני (.xlsx)"
     return render_template("import.html")
+from io import BytesIO
+from flask import send_file
+
+@app.route('/export')
+def export():
+    df = load_data_from_gsheet()
+    if df.empty:
+        return "אין נתונים לייצוא."
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Data')
+    output.seek(0)
+
+    return send_file(
+        output,
+        as_attachment=True,
+        download_name="gadash_data.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # --- הפעלה ---
 
