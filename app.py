@@ -56,16 +56,16 @@ def load_data_from_gsheet():
         sheet = init_gsheet()
         data = sheet.get_all_records()
         df = pd.DataFrame(data)
+        print("עמודות ב-DataFrame:", df.columns.tolist())  # בדיקה
+        df.columns = df.columns.str.strip()  # מסיר רווחים
+        if "תאריך" not in df.columns:
+            print("העמודה 'תאריך' לא נמצאה!")
+            return pd.DataFrame()
         return df
     except Exception as e:
-        raise RuntimeError(f"שגיאה בטעינת גוגל שיטס: {e}")
-def save_data_to_gsheet(df):
-    try:
-        sheet = init_gsheet()
-        sheet.clear()
-        sheet.update([df.columns.values.tolist()] + df.values.tolist())
-    except Exception as e:
-        print(f"שגיאה בשמירת גוגל שיטס: {e}")
+        print(f"שגיאה בטעינת גוגל שיטס: {e}")
+        return pd.DataFrame()
+
 
 # --- בוט טלגרם ---
 
