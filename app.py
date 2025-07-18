@@ -226,6 +226,8 @@ app = Flask(__name__)
 def index():
     try:
         df = load_data_from_gsheet()
+        if df.empty:
+            return "אין נתונים להצגה."
         df = df.sort_values(by="תאריך", ascending=False)
         total_count = len(df)
 
