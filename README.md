@@ -1,58 +1,57 @@
-# 🌾 מערכת ניהול עבודות קבלנות - גד"ש שדה אליהו
+# גד"ש Data Management
 
-פרויקט מבוסס Flask ובוט טלגרם לתיעוד, תצוגה וחיפוש עבודות חקלאיות, עם שילוב Google Sheets כבסיס נתונים.
+מערכת ניהול דיווחי עבודות קבלן עבור גד"ש שדה אליהו, עם ממשק אינטרנטי, תמיכה בבוט טלגרם, ושמירה אוטומטית לגיליון Google Sheets.
 
-## 🚀 תכונות עיקריות
+## 🚀 תכונות
 
-- שליחת דיווחי עבודות דרך בוט טלגרם
-- תצוגת כל העבודות באתר אינטרנט
-- סינון לפי לקוח ותאריך
-- ייצוא לקובץ Excel
-- שמירה ושליפה מ־Google Sheets
-
----
-
-## 🛠️ טכנולוגיות
-
-- Python + Flask
-- Telegram Bot API (באמצעות python-telegram-bot)
-- Google Sheets API (gspread)
-- Bootstrap RTL לגרסה עברית
+- העלאת קובצי Excel עם עבודות מהשדה
+- חיפוש וסינון לפי לקוח ותאריך
+- יצוא לאקסל
+- ממשק בוט טלגרם לדיווח עבודות
+- שמירה אוטומטית ל-Google Sheets
+- פריסה על Fly.io
 
 ---
 
-## ⚙️ התקנה והרצה מקומית
+## 📁 מבנה הקבצים
 
-1. **שכפול הריפוזיטורי:**
+- `app.py` — קוד שרת Flask
+- `templates/` — קבצי HTML
+- `static/` — קבצי CSS/JS במידת הצורך
+- `credentials.json` — קובץ ההרשאות של Google (לא מועלה ל-GitHub)
+- `.env` — קובץ משתני סביבה (כולל GOOGLE_CREDS)
+- `requirements.txt` — ספריות Python
+
+---
+
+## ⚙️ התקנה מקומית
+
+1. שכפל את הריפוזיטורי:
 
 ```bash
-git clone https://github.com/your-username/your-repo-name.git
-cd your-repo-name
+git clone https://github.com/your-username/gadash-data.git
+cd gadash-data
 ```
 
-2. **התקנת חבילות:**
+2. צור וירטואלית והתקן חבילות:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. **הוספת אישורים של Google Sheets:**
+3. הכן משתני סביבה:
 
-- צור פרויקט בגוגל קונסול, הפעל Sheets API ו־Drive API.
-- צור מפתח שירות (Service Account) והורד את קובץ `credentials.json`.
-- המרת הקובץ למשתנה סביבה:
+צור קובץ `.env` והוסף בו:
 
-```bash
-export GOOGLE_CREDS="$(cat credentials.json)"
+```
+GOOGLE_CREDS=<תוכן ה-json כ-string>
 ```
 
-או ב־`.env`:
+> מומלץ להשתמש ב־1-liner JSON עם `json.dumps()` מראש או לקרוא ישירות מתוך הקובץ אם לא בפריסה ל־Fly.io.
 
-```env
-GOOGLE_CREDS={"type": "...", "project_id": "...", ...}
-```
-
-4. **הרצת Flask:**
+4. הרץ את האפליקציה:
 
 ```bash
 flask run
@@ -60,54 +59,52 @@ flask run
 
 ---
 
-## 🤖 שימוש בבוט
+## ☁️ פריסה על Fly.io
 
-- שלח `/start` לבוט
-- שלח דיווח בפורמט:
-```
-שם לקוח, תאריך, עבודה, חלקה, כמות, כלי, מפעיל, הערות
-```
+1. התקן את CLI של Fly.io:
 
----
-
-## 📁 מבנה קבצים עיקריים
-
-```
-├── app.py                  # שרת Flask
-├── bot.py                  # קוד בוט הטלגרם
-├── templates/
-│   └── index.html          # תצוגת הנתונים
-├── static/                 # קבצי עיצוב בעתיד
-├── requirements.txt
-└── README.md
+```bash
+curl -L https://fly.io/install.sh | sh
 ```
 
----
+2. התחבר ופרוס:
 
-## 📝 הערות
+```bash
+flyctl launch
+flyctl deploy
+```
 
-- ודא ששם הגיליון ב־Google Sheets הוא **Gadash Data**
-- השורה הראשונה בגיליון חייבת להיות:
+3. הגדר משתני סביבה:
 
-  ```text
-  שם לקוח | תאריך | עבודה | שם חלקה | כמות | כלי | מפעיל | הערות | מזין
-  ```
-
----
-
-## 📸 תמונה לדוגמה (אופציונלי)
-
-![screenshot](static/screenshot.png)
+```bash
+flyctl secrets set GOOGLE_CREDS='{"type": "service_account", ...}'
+```
 
 ---
 
-## 📤 פריסה בענן
+## 📄 פורמט גיליון Google Sheets
 
-ניתן להפעיל גם ב־Render, Railway או Heroku. ודא שאתה מגדיר משתנה סביבה `GOOGLE_CREDS` במערכת.
+יש לוודא שהגיליון כולל את העמודות הבאות (שורה ראשונה היא כותרות):
+
+```
+שם לקוח | תאריך | עבודה | שם חלקה | כמות | כלי | מפעיל | הערות | מזין
+```
 
 ---
 
-## 🧑‍💻 קרדיטים
+## 🧠 הערות
 
-פותח ע"י עמית גינזבורג, 2025  
-בשיתוף פעולה עם קיבוץ שדה אליהו 🌿
+- אין להעלות את `credentials.json` ל־GitHub — השתמשו ב־`.gitignore`.
+- אם יש בעיה עם `GOOGLE_CREDS`, ודאו שהתוכן בפורמט JSON תקני.
+
+---
+
+## 🧑‍💻 תרומה
+
+תרומות, הצעות ושיפורים תמיד מתקבלים בברכה.
+
+---
+
+## רישיון
+
+[MIT License](LICENSE)
