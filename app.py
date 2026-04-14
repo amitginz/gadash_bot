@@ -389,9 +389,13 @@ def export():
     )
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Start bot thread at import time (works with both gunicorn and direct run) ──
+
+if os.environ.get("BOT_TOKEN"):
+    _bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
+    _bot_thread.start()
+
+# ── Entry point (direct run only) ─────────────────────────────────────────────
 
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
-    bot_thread.start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
