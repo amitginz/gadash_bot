@@ -4,7 +4,7 @@ from datetime import date
 import gspread
 import asyncio
 import threading
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler,
@@ -43,11 +43,11 @@ def _get_sheet():
         ]
         raw = os.environ.get("GOOGLE_CREDS")
         if raw:
-            # Production: credentials supplied as JSON env var (Fly.io / Docker)
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(raw), scope)
+            # Production: credentials supplied as JSON env var (Render / Fly.io)
+            creds = Credentials.from_service_account_info(json.loads(raw), scopes=scope)
         elif os.path.exists("credentials.json"):
             # Local development: use credentials.json file
-            creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+            creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
         else:
             raise RuntimeError(
                 "No Google credentials found. "
