@@ -37,15 +37,22 @@ def _get_sheet():
     """Return a gspread Worksheet, reconnecting if the session expired."""
     global _gs_client
     if _gs_client is None:
-        raw = os.environ.get("GOOGLE_CREDS")
-        if not raw:
-            raise RuntimeError("GOOGLE_CREDS env var is not set")
-        creds_dict = json.loads(raw)
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        raw = os.environ.get("GOOGLE_CREDS")
+        if raw:
+            # Production: credentials supplied as JSON env var (Fly.io / Docker)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(raw), scope)
+        elif os.path.exists("credentials.json"):
+            # Local development: use credentials.json file
+            creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        else:
+            raise RuntimeError(
+                "No Google credentials found. "
+                "Set GOOGLE_CREDS env var or place credentials.json in the project root."
+            )
         _gs_client = gspread.authorize(creds)
     try:
         return _gs_client.open("Gadash Data").sheet1
