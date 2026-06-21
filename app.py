@@ -13,7 +13,8 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from io import BytesIO
-import os, json, time, math
+from dataclasses import dataclass
+import os, json, time, math, re
 
 TOKEN = os.getenv("BOT_TOKEN")
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://gadash-bot.fly.dev")
@@ -33,6 +34,83 @@ MENU_KEYBOARD = [
 ]
 
 COLUMNS = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמות", "כלי", "מפעיל", "הערות", "מזין"]
+VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
+
+
+@dataclass
+class WorkEntry:
+    client:     str
+    date:       str
+    task:       str
+    field_name: str = ""
+    amount:     str = ""
+    tool:       str = ""
+    operator:   str = ""
+    notes:      str = ""
+    entered_by: str = ""
+
+    def __post_init__(self):
+        self.client = self.client.strip()
+        self.date   = self.date.strip()
+        self.task   = self.task.strip()
+        if not self.client:
+            raise ValueError("שם לקוח חובה")
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", self.date):
+            raise ValueError(f"תאריך לא תקין: '{self.date}' — נדרש YYYY-MM-DD")
+        if self.task not in VALID_TASKS:
+            raise ValueError(f"סוג עבודה לא תקין: '{self.task}'")
+
+    def to_sheet_row(self) -> list:
+        return [
+            self.client, self.date, self.task, self.field_name,
+            self.amount, self.tool, self.operator, self.notes, self.entered_by,
+        ]
+
+    def to_dict(self) -> dict:
+        return dict(zip(COLUMNS, self.to_sheet_row()))
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WorkEntry":
+        return cls(
+            client=str(d.get("שם לקוח", "")),
+            date=str(d.get("תאריך", "")),
+            task=str(d.get("עבודה", "")),
+            field_name=str(d.get("שם חלקה", "")),
+            amount=str(d.get("כמות", "")),
+            tool=str(d.get("כלי", "")),
+            operator=str(d.get("מפעיל", "")),
+            notes=str(d.get("הערות", "")),
+            entered_by=str(d.get("מזין", "")),
+        )
+
+    @classmethod
+    def from_form(cls, form, entered_by: str = "Web") -> "WorkEntry":
+        return cls(
+            client=form.get("שם לקוח", ""),
+            date=form.get("תאריך", ""),
+            task=form.get("עבודה", ""),
+            field_name=form.get("שם חלקה", ""),
+            amount=form.get("כמות", ""),
+            tool=form.get("כלי", ""),
+            operator=form.get("מפעיל", ""),
+            notes=form.get("הערות", ""),
+            entered_by=entered_by,
+        )
+
+    @classmethod
+    def from_bot(cls, user_data: dict, full_name: str) -> "WorkEntry":
+        return cls(
+            client=user_data.get("שם לקוח", ""),
+            date=user_data.get("תאריך", ""),
+            task=user_data.get("עבודה", ""),
+            field_name=user_data.get("שם חלקה", ""),
+            amount=user_data.get("כמות", ""),
+            tool=user_data.get("כלי", ""),
+            operator=user_data.get("מפעיל", ""),
+            notes=user_data.get("הערות", ""),
+            entered_by=full_name,
+        )
+
 
 # ── Google Sheets ──────────────────────────────────────────────────────────────
 
@@ -99,10 +177,9 @@ def load_data_from_gsheet() -> pd.DataFrame:
         return pd.DataFrame(columns=COLUMNS)
 
 
-def append_row_to_gsheet(row: dict):
+def append_row_to_gsheet(entry: WorkEntry):
     sheet = _get_sheet()
-    values = [str(row.get(col, "")) for col in COLUMNS]
-    sheet.append_row(values, value_input_option="USER_ENTERED")
+    sheet.append_row(entry.to_sheet_row(), value_input_option="USER_ENTERED")
     _invalidate_cache()
 
 
@@ -359,11 +436,12 @@ async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
-        row = context.user_data.copy()
-        row["מזין"] = update.message.from_user.full_name
         try:
-            append_row_to_gsheet(row)
+            entry = WorkEntry.from_bot(context.user_data, update.message.from_user.full_name)
+            append_row_to_gsheet(entry)
             await update.message.reply_text("✅ נשמר בהצלחה!")
+        except ValueError as e:
+            await update.message.reply_text(f"❌ שגיאת אימות: {e}")
         except Exception as e:
             await update.message.reply_text(f"❌ שגיאה בשמירה: {e}")
     else:
@@ -589,12 +667,13 @@ def index():
 def add():
     today = date.today().strftime("%Y-%m-%d")
     if request.method == "POST":
-        row = {col: request.form.get(col, "") for col in COLUMNS if col != "מזין"}
-        row["מזין"] = "Web"
         try:
-            append_row_to_gsheet(row)
+            entry = WorkEntry.from_form(request.form, entered_by="Web")
+            append_row_to_gsheet(entry)
             flash("הרשומה נוספה בהצלחה ✅", "success")
             return redirect(url_for("index"))
+        except ValueError as e:
+            flash(f"שגיאת אימות: {e} ❌", "danger")
         except Exception as e:
             flash(f"שגיאה בשמירה: {e} ❌", "danger")
     prefill = {col: request.args.get(col, "") for col in COLUMNS if col != "מזין"}
@@ -628,11 +707,20 @@ def edit(row_id):
     df = load_data_from_gsheet()
     if request.method == "POST":
         try:
-            for key in COLUMNS:
-                df.at[row_id, key] = request.form.get(key, "")
+            original_entered_by = df.at[row_id, "מזין"] if row_id < len(df) else "Web"
+            entry = WorkEntry.from_form(request.form, entered_by=original_entered_by)
+            for key, value in entry.to_dict().items():
+                df.at[row_id, key] = value
             save_data_to_gsheet(df)
             flash("הרשומה עודכנה בהצלחה ✅", "success")
             return redirect(url_for("index"))
+        except ValueError as e:
+            flash(f"שגיאת אימות: {e} ❌", "danger")
+            try:
+                row_data = df.iloc[row_id].to_dict()
+                return render_template("edit.html", row=row_data, row_id=row_id)
+            except Exception:
+                pass
         except Exception as e:
             flash(f"שגיאה בעדכון: {e} ❌", "danger")
     try:
