@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file
+from flask import Flask, render_template, request, redirect, url_for, send_file, flash
 import pandas as pd
 from datetime import date
 import gspread
@@ -323,6 +323,7 @@ def start_telegram_bot():
 # ── Flask Web App ──────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
 
 
 @app.route("/")
@@ -342,14 +343,17 @@ def index():
         df = df.reset_index().rename(columns={"index": "_row_id"})
         df = df.sort_values(by="תאריך", ascending=False)
 
-        client_filter = request.args.get("client", "").strip()
-        date_filter   = request.args.get("date", "").strip()
-        task_filter   = request.args.get("task", "").strip()
+        client_filter   = request.args.get("client", "").strip()
+        date_from       = request.args.get("date_from", "").strip()
+        date_to         = request.args.get("date_to", "").strip()
+        task_filter     = request.args.get("task", "").strip()
 
         if client_filter:
             df = df[df["שם לקוח"].str.contains(client_filter, case=False, na=False)]
-        if date_filter:
-            df = df[df["תאריך"] == date_filter]
+        if date_from:
+            df = df[df["תאריך"] >= date_from]
+        if date_to:
+            df = df[df["תאריך"] <= date_to]
         if task_filter:
             df = df[df["עבודה"] == task_filter]
 
@@ -369,7 +373,8 @@ def index():
             top_client=top_client,
             top_task=top_task,
             client_filter=client_filter,
-            date_filter=date_filter,
+            date_from=date_from,
+            date_to=date_to,
             task_filter=task_filter,
             task_options=task_options,
             task_counts=task_counts,
@@ -384,7 +389,8 @@ def index():
             top_client="—",
             top_task="—",
             client_filter="",
-            date_filter="",
+            date_from="",
+            date_to="",
             task_filter="",
             task_options=[],
             task_counts={},
@@ -401,9 +407,10 @@ def add():
         row["מזין"] = "Web"
         try:
             append_row_to_gsheet(row)
-            return render_template("add.html", today=today, success=True)
+            flash("הרשומה נוספה בהצלחה ✅", "success")
+            return redirect(url_for("index"))
         except Exception as e:
-            return render_template("add.html", today=today, error=str(e))
+            flash(f"שגיאה בשמירה: {e} ❌", "danger")
     return render_template("add.html", today=today)
 
 
@@ -415,9 +422,10 @@ def edit(row_id):
             for key in COLUMNS:
                 df.at[row_id, key] = request.form.get(key, "")
             save_data_to_gsheet(df)
+            flash("הרשומה עודכנה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except Exception as e:
-            return f"שגיאה בעדכון: {e}"
+            flash(f"שגיאה בעדכון: {e} ❌", "danger")
     try:
         row_data = df.iloc[row_id].to_dict()
         return render_template("edit.html", row=row_data, row_id=row_id)
@@ -430,6 +438,7 @@ def delete(row_id):
     df = load_data_from_gsheet()
     df = df.drop(index=row_id).reset_index(drop=True)
     save_data_to_gsheet(df)
+    flash("הרשומה נמחקה ✅", "success")
     return redirect(url_for("index"))
 
 

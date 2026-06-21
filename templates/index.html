@@ -222,6 +222,16 @@
     </div>
   </div>
 
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show mt-3 d-flex align-items-center gap-2" role="alert">
+      <i class="bi bi-{{ 'check-circle-fill' if category == 'success' else 'exclamation-triangle-fill' }}"></i>
+      <span>{{ message }}</span>
+      <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endwith %}
+
   {% if error %}
   <div class="alert alert-danger mt-3 d-flex align-items-center gap-2">
     <i class="bi bi-exclamation-triangle-fill"></i>
@@ -259,11 +269,15 @@
             <i class="bi bi-search"></i>
           </div>
         </div>
-        <div class="col-6 col-sm-3">
-          <label class="form-label">תאריך</label>
-          <input type="date" name="date" class="form-control" value="{{ date_filter }}">
+        <div class="col-6 col-sm-2">
+          <label class="form-label">מתאריך</label>
+          <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
         </div>
-        <div class="col-6 col-sm-3">
+        <div class="col-6 col-sm-2">
+          <label class="form-label">עד תאריך</label>
+          <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+        </div>
+        <div class="col-6 col-sm-2">
           <label class="form-label">סוג עבודה</label>
           <select name="task" class="form-select">
             <option value="">הכל</option>
@@ -390,6 +404,11 @@
     document.getElementById('deleteForm').action = '/delete/' + rowId;
     new bootstrap.Modal(document.getElementById('deleteModal')).show();
   }
+
+  // Auto-dismiss flash alerts after 4 seconds
+  document.querySelectorAll('.alert.alert-success, .alert.alert-danger').forEach(el => {
+    setTimeout(() => bootstrap.Alert.getOrCreateInstance(el).close(), 4000);
+  });
 
   // Charts
   const TASK_COLORS = {
