@@ -1,6 +1,6 @@
 # Gadash Bot
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20App-2563eb?style=for-the-badge&logo=render)](https://gadash-bot.onrender.com)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20App-2563eb?style=for-the-badge&logo=fly.io)](https://gadash-bot.fly.dev/)
 
 A combined Flask web app and Telegram bot for managing contractor work reports for Gadash Sdeh Eliyahu. Field workers log jobs via Telegram; managers view, edit, and export all records from a web dashboard. Everything syncs automatically to a shared Google Sheet.
 
