@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file, flash
+from flask import Flask, render_template, request, redirect, url_for, send_file, flash, session
+from functools import wraps
 import pandas as pd
 from datetime import date
 import gspread
@@ -11,21 +12,23 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from io import BytesIO
-import os, json, time, threading
+import os, json, time, math
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM = range(10)
+PAGE_SIZE = 50
+
+MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH = range(11)
 
 TASK_CHOICES = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
+NOTES_KEYBOARD = [["ללא הערות"]]
 MENU_KEYBOARD = [
     ["הזן עבודה חדשה"],
-    ["5 עבודות אחרונות"],
+    ["5 עבודות אחרונות", "חפש לפי לקוח"],
     ["סיים"],
 ]
 
-# Canonical column order — must match Google Sheet headers
 COLUMNS = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמות", "כלי", "מפעיל", "הערות", "מזין"]
 
 # ── Google Sheets ──────────────────────────────────────────────────────────────
@@ -44,7 +47,6 @@ def _invalidate_cache():
 
 
 def _get_sheet():
-    """Return a gspread Worksheet, reconnecting if the session expired."""
     global _gs_client
     with _gs_lock:
         if _gs_client is None:
@@ -98,7 +100,6 @@ def load_data_from_gsheet() -> pd.DataFrame:
 
 
 def append_row_to_gsheet(row: dict):
-    """Append one row — fast and safe (no full rewrite)."""
     sheet = _get_sheet()
     values = [str(row.get(col, "")) for col in COLUMNS]
     sheet.append_row(values, value_input_option="USER_ENTERED")
@@ -106,7 +107,6 @@ def append_row_to_gsheet(row: dict):
 
 
 def save_data_to_gsheet(df: pd.DataFrame):
-    """Full rewrite — only for edit / delete operations."""
     sheet = _get_sheet()
     sheet.clear()
     sheet.append_row(COLUMNS)
@@ -122,6 +122,26 @@ def _menu_markup():
     return ReplyKeyboardMarkup(MENU_KEYBOARD, resize_keyboard=True)
 
 
+def _recent_clients_markup():
+    """Show last 5 unique clients as quick-reply buttons."""
+    try:
+        df = load_data_from_gsheet()
+        seen, recent = set(), []
+        for name in reversed(df["שם לקוח"].dropna().tolist()):
+            name = name.strip()
+            if name and name not in seen:
+                seen.add(name)
+                recent.append(name)
+            if len(recent) == 5:
+                break
+        if recent:
+            rows = [[c] for c in recent]
+            return ReplyKeyboardMarkup(rows, one_time_keyboard=True, resize_keyboard=True)
+    except Exception:
+        pass
+    return ReplyKeyboardRemove()
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print("[BOT] /start received from", update.message.from_user.id, flush=True)
     await update.message.reply_text(
@@ -134,11 +154,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if text == "הזן עבודה חדשה":
-        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=_recent_clients_markup())
         return CLIENT
     elif text == "5 עבודות אחרונות":
         await bot_recent(update, context)
         return MENU
+    elif text == "חפש לפי לקוח":
+        await update.message.reply_text("הכנס שם לקוח לחיפוש:", reply_markup=ReplyKeyboardRemove())
+        return SEARCH
     elif text == "סיים":
         await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
@@ -152,11 +175,14 @@ async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text == "הזן עבודה חדשה":
-        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=_recent_clients_markup())
         return CLIENT
     elif text == "5 עבודות אחרונות":
         await bot_recent(update, context)
         return MENU
+    elif text == "חפש לפי לקוח":
+        await update.message.reply_text("הכנס שם לקוח לחיפוש:", reply_markup=ReplyKeyboardRemove())
+        return SEARCH
     elif text == "סיים":
         await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
@@ -182,9 +208,31 @@ async def bot_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
 
 
+async def bot_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
+    try:
+        df = load_data_from_gsheet()
+        results = df[df["שם לקוח"].str.contains(query, case=False, na=False)]
+        if results.empty:
+            await update.message.reply_text(f"לא נמצאו תוצאות עבור '{query}'.", reply_markup=_menu_markup())
+        else:
+            lines = [f"🔍 נמצאו {len(results)} עבודות עבור '{query}':\n"]
+            for _, row in results.tail(10).iterrows():
+                lines.append(
+                    f"• {row.get('תאריך','')} | {row.get('עבודה','')} | "
+                    f"{row.get('שם חלקה','')} | {row.get('כמות','')}"
+                )
+            if len(results) > 10:
+                lines.append(f"\n...ועוד {len(results)-10} תוצאות נוספות")
+            await update.message.reply_text("\n".join(lines), reply_markup=_menu_markup())
+    except Exception as e:
+        await update.message.reply_text(f"שגיאה בחיפוש: {e}", reply_markup=_menu_markup())
+    return MENU
+
+
 async def client_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["שם לקוח"] = update.message.text.strip()
-    await update.message.reply_text("מה התאריך? (YYYY-MM-DD או 'היום')")
+    await update.message.reply_text("מה התאריך? (YYYY-MM-DD או 'היום')", reply_markup=ReplyKeyboardRemove())
     return DATE
 
 
@@ -234,12 +282,16 @@ async def tool(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def operator_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["מפעיל"] = update.message.text.strip()
-    await update.message.reply_text("הערות (אם אין, כתוב -):")
+    await update.message.reply_text(
+        "הערות (אם אין, לחץ על הכפתור):",
+        reply_markup=ReplyKeyboardMarkup(NOTES_KEYBOARD, one_time_keyboard=True, resize_keyboard=True),
+    )
     return NOTE
 
 
 async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["הערות"] = update.message.text.strip()
+    text = update.message.text.strip()
+    context.user_data["הערות"] = "" if text == "ללא הערות" else text
     summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items())
     await update.message.reply_text(
         f"סיכום לפני שמירה:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
@@ -303,6 +355,7 @@ def start_telegram_bot():
             OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
             NOTE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, note)],
             CONFIRM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            SEARCH:   [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -326,49 +379,86 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
 
 
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if session.get("logged_in"):
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if password == os.environ.get("WEB_PASSWORD", "gadash2025"):
+            session["logged_in"] = True
+            return redirect(url_for("index"))
+        flash("סיסמה שגויה ❌", "danger")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.pop("logged_in", None)
+    return redirect(url_for("login"))
+
+
+def _apply_filters(df):
+    client_filter = request.args.get("client", "").strip()
+    date_from     = request.args.get("date_from", "").strip()
+    date_to       = request.args.get("date_to", "").strip()
+    task_filter   = request.args.get("task", "").strip()
+    if client_filter:
+        df = df[df["שם לקוח"].str.contains(client_filter, case=False, na=False)]
+    if date_from:
+        df = df[df["תאריך"] >= date_from]
+    if date_to:
+        df = df[df["תאריך"] <= date_to]
+    if task_filter:
+        df = df[df["עבודה"] == task_filter]
+    return df
+
+
 @app.route("/")
+@login_required
 def index():
     try:
         df = load_data_from_gsheet()
         total_count = len(df)
 
-        # Stats for dashboard cards
-        today_str = date.today().strftime("%Y-%m-%d")
         month_prefix = date.today().strftime("%Y-%m")
-        month_count = int(df["תאריך"].str.startswith(month_prefix).sum()) if total_count else 0
-        top_client = df["שם לקוח"].mode()[0] if total_count else "—"
-        top_task = df["עבודה"].mode()[0] if total_count else "—"
+        month_count  = int(df["תאריך"].str.startswith(month_prefix).sum()) if total_count else 0
+        top_client   = df["שם לקוח"].mode()[0] if total_count else "—"
+        top_task     = df["עבודה"].mode()[0] if total_count else "—"
 
-        # Preserve original GSheet row index before sort/filter
         df = df.reset_index().rename(columns={"index": "_row_id"})
         df = df.sort_values(by="תאריך", ascending=False)
+        df = _apply_filters(df)
 
-        client_filter   = request.args.get("client", "").strip()
-        date_from       = request.args.get("date_from", "").strip()
-        date_to         = request.args.get("date_to", "").strip()
-        task_filter     = request.args.get("task", "").strip()
+        filtered_count = len(df)
+        page           = request.args.get("page", 1, type=int)
+        total_pages    = max(1, math.ceil(filtered_count / PAGE_SIZE))
+        page           = max(1, min(page, total_pages))
+        df             = df.iloc[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
 
-        if client_filter:
-            df = df[df["שם לקוח"].str.contains(client_filter, case=False, na=False)]
-        if date_from:
-            df = df[df["תאריך"] >= date_from]
-        if date_to:
-            df = df[df["תאריך"] <= date_to]
-        if task_filter:
-            df = df[df["עבודה"] == task_filter]
-
-        records = df.to_dict(orient="records")
-        task_options = ["חריש", "ריסוס", "קציר", "דיסוק", "אחר"]
-
-        # Chart data (full dataset, before filter)
-        full_df = load_data_from_gsheet()
-        task_counts = full_df["עבודה"].value_counts().to_dict()
+        full_df       = load_data_from_gsheet()
+        task_counts   = full_df["עבודה"].value_counts().to_dict()
         client_counts = full_df["שם לקוח"].value_counts().head(6).to_dict()
+
+        client_filter = request.args.get("client", "").strip()
+        date_from     = request.args.get("date_from", "").strip()
+        date_to       = request.args.get("date_to", "").strip()
+        task_filter   = request.args.get("task", "").strip()
 
         return render_template(
             "index.html",
-            records=records,
+            records=df.to_dict(orient="records"),
             total_count=total_count,
+            filtered_count=filtered_count,
             month_count=month_count,
             top_client=top_client,
             top_task=top_task,
@@ -376,30 +466,25 @@ def index():
             date_from=date_from,
             date_to=date_to,
             task_filter=task_filter,
-            task_options=task_options,
+            task_options=["חריש", "ריסוס", "קציר", "דיסוק", "אחר"],
             task_counts=task_counts,
             client_counts=client_counts,
+            page=page,
+            total_pages=total_pages,
         )
     except Exception as e:
         return render_template(
             "index.html",
-            records=[],
-            total_count=0,
-            month_count=0,
-            top_client="—",
-            top_task="—",
-            client_filter="",
-            date_from="",
-            date_to="",
-            task_filter="",
-            task_options=[],
-            task_counts={},
-            client_counts={},
-            error=str(e),
+            records=[], total_count=0, filtered_count=0,
+            month_count=0, top_client="—", top_task="—",
+            client_filter="", date_from="", date_to="", task_filter="",
+            task_options=[], task_counts={}, client_counts={},
+            page=1, total_pages=1, error=str(e),
         )
 
 
 @app.route("/add", methods=["GET", "POST"])
+@login_required
 def add():
     today = date.today().strftime("%Y-%m-%d")
     if request.method == "POST":
@@ -411,10 +496,17 @@ def add():
             return redirect(url_for("index"))
         except Exception as e:
             flash(f"שגיאה בשמירה: {e} ❌", "danger")
-    return render_template("add.html", today=today)
+    client_list = []
+    try:
+        df = load_data_from_gsheet()
+        client_list = sorted(df["שם לקוח"].dropna().unique().tolist())
+    except Exception:
+        pass
+    return render_template("add.html", today=today, client_list=client_list)
 
 
 @app.route("/edit/<int:row_id>", methods=["GET", "POST"])
+@login_required
 def edit(row_id):
     df = load_data_from_gsheet()
     if request.method == "POST":
@@ -434,6 +526,7 @@ def edit(row_id):
 
 
 @app.route("/delete/<int:row_id>", methods=["POST"])
+@login_required
 def delete(row_id):
     df = load_data_from_gsheet()
     df = df.drop(index=row_id).reset_index(drop=True)
@@ -443,6 +536,7 @@ def delete(row_id):
 
 
 @app.route("/import", methods=["GET", "POST"])
+@login_required
 def import_data():
     if request.method == "POST":
         file = request.files.get("file")
@@ -451,16 +545,20 @@ def import_data():
             df = load_data_from_gsheet()
             combined = pd.concat([df, new_df], ignore_index=True) if not df.empty else new_df
             save_data_to_gsheet(combined)
+            flash("הקובץ יובא בהצלחה ✅", "success")
             return redirect(url_for("index"))
-        return "יש לבחור קובץ Excel תקני (.xlsx)"
+        flash("יש לבחור קובץ Excel תקני (.xlsx) ❌", "danger")
     return render_template("import.html")
 
 
 @app.route("/export")
+@login_required
 def export():
     df = load_data_from_gsheet()
     if df.empty:
-        return "אין נתונים לייצוא."
+        flash("אין נתונים לייצוא ❌", "danger")
+        return redirect(url_for("index"))
+    df = _apply_filters(df)
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Data")
@@ -473,13 +571,11 @@ def export():
     )
 
 
-# ── Start bot thread at import time (works with both gunicorn and direct run) ──
+# ── Start bot thread at import time ───────────────────────────────────────────
 
 if os.environ.get("BOT_TOKEN"):
     _bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
     _bot_thread.start()
-
-# ── Entry point (direct run only) ─────────────────────────────────────────────
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

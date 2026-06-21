@@ -170,6 +170,7 @@
     <a href="/add"><i class="bi bi-plus-circle"></i> הוספה</a>
     <a href="/export"><i class="bi bi-file-earmark-excel"></i> ייצוא</a>
     <a href="/import"><i class="bi bi-upload"></i> ייבוא</a>
+    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
   </div>
 </nav>
 
@@ -300,17 +301,36 @@
 
   <!-- Action bar -->
   <div class="action-bar mt-3">
-    <div>
-      {% if records %}
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      {% if filtered_count is defined %}
       <span class="result-badge">
         <i class="bi bi-list-ul"></i>
-        מציג {{ records|length }}{% if total_count != records|length %} מתוך {{ total_count }}{% endif %} עבודות
+        {% if filtered_count != total_count %}
+          {{ filtered_count }} תוצאות (מתוך {{ total_count }})
+        {% else %}
+          {{ total_count }} עבודות
+        {% endif %}
       </span>
+      {% if total_pages > 1 %}
+      <span class="text-muted small">עמוד {{ page }} מתוך {{ total_pages }}</span>
+      {% endif %}
       {% endif %}
     </div>
-    <a href="/add" class="btn btn-success btn-sm px-3">
-      <i class="bi bi-plus-lg"></i> הוסף עבודה
-    </a>
+    <div class="d-flex gap-2 flex-wrap">
+      {% set export_params = [] %}
+      {% if client_filter %}{% set _ = export_params.append("client=" ~ client_filter) %}{% endif %}
+      {% if date_from %}{% set _ = export_params.append("date_from=" ~ date_from) %}{% endif %}
+      {% if date_to %}{% set _ = export_params.append("date_to=" ~ date_to) %}{% endif %}
+      {% if task_filter %}{% set _ = export_params.append("task=" ~ task_filter) %}{% endif %}
+      {% if export_params %}
+      <a href="/export?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
+        <i class="bi bi-file-earmark-excel"></i> ייצא ממוסנן
+      </a>
+      {% endif %}
+      <a href="/add" class="btn btn-success btn-sm px-3">
+        <i class="bi bi-plus-lg"></i> הוסף עבודה
+      </a>
+    </div>
   </div>
 
   <!-- Table -->
@@ -374,6 +394,38 @@
     </div>
     {% endif %}
   </div>
+
+  <!-- Pagination -->
+  {% if total_pages > 1 %}
+  <nav class="mt-3 d-flex justify-content-center" aria-label="pagination">
+    <ul class="pagination pagination-sm mb-0">
+      {% set base_params = [] %}
+      {% if client_filter %}{% set _ = base_params.append("client=" ~ client_filter) %}{% endif %}
+      {% if date_from %}{% set _ = base_params.append("date_from=" ~ date_from) %}{% endif %}
+      {% if date_to %}{% set _ = base_params.append("date_to=" ~ date_to) %}{% endif %}
+      {% if task_filter %}{% set _ = base_params.append("task=" ~ task_filter) %}{% endif %}
+      {% set qs = base_params | join('&') %}
+
+      <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+        <a class="page-link" href="/?{{ qs }}{% if qs %}&{% endif %}page={{ page - 1 }}">‹ קודם</a>
+      </li>
+
+      {% for p in range(1, total_pages + 1) %}
+        {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+          <a class="page-link" href="/?{{ qs }}{% if qs %}&{% endif %}page={{ p }}">{{ p }}</a>
+        </li>
+        {% elif p == page - 3 or p == page + 3 %}
+        <li class="page-item disabled"><span class="page-link">…</span></li>
+        {% endif %}
+      {% endfor %}
+
+      <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+        <a class="page-link" href="/?{{ qs }}{% if qs %}&{% endif %}page={{ page + 1 }}">הבא ›</a>
+      </li>
+    </ul>
+  </nav>
+  {% endif %}
 
 </div><!-- /container -->
 

@@ -45,7 +45,13 @@
       <div class="row g-3">
         <div class="col-12">
           <label class="form-label">שם לקוח *</label>
-          <input type="text" class="form-control" name="שם לקוח" required placeholder="הכנס שם לקוח" />
+          <input type="text" class="form-control" name="שם לקוח" required placeholder="הכנס שם לקוח"
+                 list="clientList" autocomplete="off" />
+          <datalist id="clientList">
+            {% for c in client_list %}
+            <option value="{{ c }}"></option>
+            {% endfor %}
+          </datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">עבודה *</label>
