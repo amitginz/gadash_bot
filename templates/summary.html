@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>דוח חודשי — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
+    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
+    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
+    .top-nav a { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; margin-inline-start: 1.2rem; }
+    .top-nav a:hover { color: #fff; }
+    .hero { background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%); color: #fff; padding: 2rem 1.5rem 1.5rem; }
+    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0; }
+    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.5rem; }
+    .table thead th { background: #1a2f4e; color: #fff; font-weight: 600; border: none; }
+    .table td, .table th { vertical-align: middle; }
+    .badge-num { background: #e8f0fb; color: #1a2f4e; border-radius: 20px; padding: .2rem .6rem; font-size: .8rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
+  <div>
+    <a href="/"><i class="bi bi-house"></i> ראשי</a>
+    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="container-lg">
+    <h1>📊 דוח חודשי מצטבר</h1>
+  </div>
+</div>
+
+<div class="container-lg py-4">
+
+  {% if error %}
+  <div class="alert alert-danger">שגיאה: {{ error }}</div>
+  {% endif %}
+
+  {% if not monthly %}
+  <div class="card-section text-center text-muted py-5">
+    <div style="font-size:3rem;opacity:.3;">📭</div>
+    <p class="fw-semibold mt-2">אין נתונים להצגה</p>
+  </div>
+  {% else %}
+
+  <!-- Monthly breakdown -->
+  <div class="card-section mb-4">
+    <h5 class="fw-bold mb-3">עבודות לפי חודש וסוג</h5>
+    <div class="table-responsive">
+      <table class="table table-hover table-bordered align-middle" style="font-size:.875rem;">
+        <thead>
+          <tr>
+            <th>חודש</th>
+            {% for t in task_types %}<th class="text-center">{{ t }}</th>{% endfor %}
+            <th class="text-center" style="background:#2a4a72;">סה"כ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in monthly %}
+          <tr>
+            <td><strong>{{ row['חודש'] }}</strong></td>
+            {% for t in task_types %}
+            <td class="text-center">
+              {% if row.get(t, 0) > 0 %}
+              <span class="badge-num">{{ row[t] }}</span>
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+            <td class="text-center fw-bold" style="background:#f0f5ff;">{{ row['סה"כ'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Client totals -->
+  <div class="card-section">
+    <h5 class="fw-bold mb-3">סה"כ עבודות לפי לקוח (Top 15)</h5>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle" style="font-size:.875rem; max-width: 500px;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>לקוח</th>
+            <th class="text-center">עבודות</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in client_totals %}
+          <tr>
+            <td class="text-muted small">{{ loop.index }}</td>
+            <td><strong>{{ row['שם לקוח'] }}</strong></td>
+            <td class="text-center"><span class="badge-num">{{ row['סה"כ'] }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // expose enumerate to Jinja — done server-side via loop.index0
+</script>
+</body>
+</html>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>הוספת רשומה — גד"ש</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
   <style>
     body { background: #f4f6f9; font-family: 'Segoe UI', sans-serif; }
     .page-header { background: linear-gradient(135deg, #1e3a5f, #2d6a9f); color: white; padding: 2rem 0 1.5rem; margin-bottom: 2rem; }
@@ -41,12 +42,18 @@
       {% endfor %}
     {% endwith %}
 
+    {% if prefill and prefill.values() | reject('equalto', '') | list %}
+    <div class="alert alert-info py-2 mb-3 small">
+      <i class="bi bi-copy"></i> הטופס מולא מרשומה קיימת — בדוק ועדכן לפי הצורך.
+    </div>
+    {% endif %}
+
     <form method="post">
       <div class="row g-3">
         <div class="col-12">
           <label class="form-label">שם לקוח *</label>
           <input type="text" class="form-control" name="שם לקוח" required placeholder="הכנס שם לקוח"
-                 list="clientList" autocomplete="off" />
+                 list="clientList" autocomplete="off" value="{{ prefill.get('שם לקוח', '') }}" />
           <datalist id="clientList">
             {% for c in client_list %}
             <option value="{{ c }}"></option>
@@ -57,36 +64,34 @@
           <label class="form-label">עבודה *</label>
           <select class="form-select" name="עבודה" required>
             <option value="">בחר סוג עבודה…</option>
-            <option>חריש</option>
-            <option>ריסוס</option>
-            <option>קציר</option>
-            <option>דיסוק</option>
-            <option>אחר</option>
+            {% for opt in ['חריש','ריסוס','קציר','דיסוק','אחר'] %}
+            <option {% if prefill.get('עבודה') == opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
           </select>
         </div>
         <div class="col-sm-6">
           <label class="form-label">תאריך *</label>
-          <input type="date" class="form-control" name="תאריך" required value="{{ today }}" />
+          <input type="date" class="form-control" name="תאריך" required value="{{ prefill.get('תאריך', today) }}" />
         </div>
         <div class="col-sm-6">
           <label class="form-label">כמות</label>
-          <input type="text" class="form-control" name="כמות" placeholder="לדוג׳ 30 דונם" />
+          <input type="text" class="form-control" name="כמות" placeholder="לדוג׳ 30 דונם" value="{{ prefill.get('כמות', '') }}" />
         </div>
         <div class="col-sm-6">
           <label class="form-label">שם חלקה</label>
-          <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳" />
+          <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳" value="{{ prefill.get('שם חלקה', '') }}" />
         </div>
         <div class="col-sm-6">
           <label class="form-label">מפעיל</label>
-          <input type="text" class="form-control" name="מפעיל" placeholder="שם המפעיל" />
+          <input type="text" class="form-control" name="מפעיל" placeholder="שם המפעיל" value="{{ prefill.get('מפעיל', '') }}" />
         </div>
         <div class="col-sm-6">
           <label class="form-label">כלי</label>
-          <input type="text" class="form-control" name="כלי" placeholder="לדוג׳ טרקטור" />
+          <input type="text" class="form-control" name="כלי" placeholder="לדוג׳ טרקטור" value="{{ prefill.get('כלי', '') }}" />
         </div>
         <div class="col-12">
           <label class="form-label">הערות</label>
-          <textarea class="form-control" name="הערות" rows="3" placeholder="הערות נוספות אם יש"></textarea>
+          <textarea class="form-control" name="הערות" rows="3" placeholder="הערות נוספות אם יש">{{ prefill.get('הערות', '') }}</textarea>
         </div>
       </div>
 

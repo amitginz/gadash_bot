@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>דוח עבודות גד"ש</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Arial Hebrew', 'Arial', sans-serif;
+      font-size: 12px;
+      color: #111;
+      background: #fff;
+      margin: 0;
+      padding: 1.5cm 1cm;
+      direction: rtl;
+    }
+    .no-print { margin-bottom: 1.5rem; }
+    .report-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1a2f4e; padding-bottom: .8rem; margin-bottom: 1rem; }
+    .report-header h1 { font-size: 18px; margin: 0 0 .2rem; color: #1a2f4e; }
+    .report-header .meta { font-size: 11px; color: #555; }
+    .filters-row { background: #f0f5ff; border-radius: 6px; padding: .4rem .8rem; font-size: 11px; margin-bottom: 1rem; color: #374151; }
+    table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
+    thead th {
+      background: #1a2f4e;
+      color: #fff;
+      padding: 6px 8px;
+      text-align: right;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    tbody tr:nth-child(even) { background: #f8fafc; }
+    tbody td { padding: 5px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    .total-row { font-weight: 700; background: #e8f0fb !important; }
+    .btn-print {
+      background: #1a2f4e; color: #fff; border: none; padding: .5rem 1.5rem;
+      border-radius: 8px; font-size: .9rem; cursor: pointer; margin-left: .5rem;
+    }
+    .btn-back {
+      background: #fff; color: #1a2f4e; border: 2px solid #1a2f4e; padding: .5rem 1.2rem;
+      border-radius: 8px; font-size: .9rem; text-decoration: none; display: inline-block;
+    }
+    @media print {
+      .no-print { display: none !important; }
+      body { padding: 1cm; }
+      a { color: #111; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="no-print">
+  <a href="/" class="btn-back">← חזור לדשבורד</a>
+  <button class="btn-print" onclick="window.print()">🖨️ הדפס / שמור PDF</button>
+</div>
+
+<div class="report-header">
+  <div>
+    <h1>🌾 גד"ש — דוח עבודות שדה</h1>
+    <div class="meta">
+      {% if client_filter %}לקוח: <strong>{{ client_filter }}</strong> &nbsp;|&nbsp;{% endif %}
+      {% if date_from %}מתאריך: <strong>{{ date_from }}</strong> &nbsp;|&nbsp;{% endif %}
+      {% if date_to %}עד: <strong>{{ date_to }}</strong> &nbsp;|&nbsp;{% endif %}
+      {% if task_filter %}עבודה: <strong>{{ task_filter }}</strong> &nbsp;|&nbsp;{% endif %}
+      סה"כ: <strong>{{ records|length }} רשומות</strong>
+    </div>
+  </div>
+  <div class="meta" style="text-align:left;">
+    הופק: {{ generated }}
+  </div>
+</div>
+
+{% if records %}
+{% set any_filter = client_filter or date_from or date_to or task_filter %}
+{% if not any_filter %}
+<div class="filters-row">כל הרשומות</div>
+{% endif %}
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>שם לקוח</th>
+      <th>תאריך</th>
+      <th>עבודה</th>
+      <th>שם חלקה</th>
+      <th>כמות</th>
+      <th>כלי</th>
+      <th>מפעיל</th>
+      <th>הערות</th>
+      <th>מזין</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in records %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td><strong>{{ row['שם לקוח'] }}</strong></td>
+      <td>{{ row['תאריך'] }}</td>
+      <td>{{ row['עבודה'] }}</td>
+      <td>{{ row['שם חלקה'] }}</td>
+      <td>{{ row['כמות'] }}</td>
+      <td>{{ row['כלי'] }}</td>
+      <td>{{ row['מפעיל'] }}</td>
+      <td>{{ row['הערות'] }}</td>
+      <td>{{ row['מזין'] }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td colspan="10">סה"כ: {{ records|length }} רשומות</td>
+    </tr>
+  </tbody>
+</table>
+{% else %}
+<p style="text-align:center; color:#64748b; margin-top:3rem;">אין רשומות להדפסה</p>
+{% endif %}
+
+</body>
+</html>

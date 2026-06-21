@@ -170,6 +170,8 @@
     <a href="/add"><i class="bi bi-plus-circle"></i> הוספה</a>
     <a href="/export"><i class="bi bi-file-earmark-excel"></i> ייצוא</a>
     <a href="/import"><i class="bi bi-upload"></i> ייבוא</a>
+    <a href="/summary"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
+    <a href="/change-password"><i class="bi bi-key"></i> סיסמה</a>
     <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
   </div>
 </nav>
@@ -326,12 +328,26 @@
       <a href="/export?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
         <i class="bi bi-file-earmark-excel"></i> ייצא ממוסנן
       </a>
+      <a href="/print?{{ export_params | join('&') }}" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
+        <i class="bi bi-printer"></i> הדפס
+      </a>
+      {% else %}
+      <a href="/print" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
+        <i class="bi bi-printer"></i> הדפס
+      </a>
       {% endif %}
+      <button type="submit" form="bulkDeleteForm" class="btn btn-outline-danger btn-sm px-3" id="bulkDeleteBtn"
+              style="display:none;" onclick="return confirm('למחוק את הרשומות שנבחרו?')">
+        <i class="bi bi-trash"></i> מחק נבחרים (<span id="selectedCount">0</span>)
+      </button>
       <a href="/add" class="btn btn-success btn-sm px-3">
         <i class="bi bi-plus-lg"></i> הוסף עבודה
       </a>
     </div>
   </div>
+
+  <!-- Bulk delete form (hidden, submitted by the button above) -->
+  <form id="bulkDeleteForm" method="POST" action="/bulk-delete" style="display:none;"></form>
 
   <!-- Table -->
   <div class="table-card mt-2">
@@ -340,6 +356,7 @@
       <table class="table table-hover" id="mainTable">
         <thead>
           <tr>
+            <th style="width:36px;"><input type="checkbox" id="selectAll" title="בחר הכל"></th>
             <th data-col="0">שם לקוח<span class="sort-icon"></span></th>
             <th data-col="1">תאריך<span class="sort-icon"></span></th>
             <th data-col="2">עבודה<span class="sort-icon"></span></th>
@@ -349,12 +366,13 @@
             <th data-col="6">מפעיל<span class="sort-icon"></span></th>
             <th data-col="7">הערות<span class="sort-icon"></span></th>
             <th data-col="8">מזין<span class="sort-icon"></span></th>
-            <th class="text-center" style="width:90px">פעולות</th>
+            <th class="text-center" style="width:110px">פעולות</th>
           </tr>
         </thead>
         <tbody>
           {% for row in records %}
           <tr>
+            <td><input type="checkbox" class="row-check" name="row_ids" value="{{ row['_row_id'] }}" form="bulkDeleteForm"></td>
             <td><strong>{{ row['שם לקוח'] }}</strong></td>
             <td>{{ row['תאריך'] }}</td>
             <td>
@@ -364,15 +382,18 @@
             <td>{{ row['כמות'] }}</td>
             <td>{{ row['כלי'] }}</td>
             <td>{{ row['מפעיל'] }}</td>
-            <td class="text-muted" style="max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            <td class="text-muted" style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
               {{ row['הערות'] }}
             </td>
             <td class="text-muted small">{{ row['מזין'] }}</td>
             <td class="text-center" style="white-space:nowrap;">
-              <a href="/edit/{{ row['_row_id'] }}" class="btn-edit btn">
+              <a href="/edit/{{ row['_row_id'] }}" class="btn-edit btn" title="עריכה">
                 <i class="bi bi-pencil-fill"></i>
               </a>
-              <button class="btn-del btn ms-1" onclick="confirmDelete({{ row['_row_id'] }})">
+              <a href="/duplicate/{{ row['_row_id'] }}" class="btn-edit btn ms-1" title="שכפל" style="color:#7c3aed;background:#ede9fe;">
+                <i class="bi bi-copy"></i>
+              </a>
+              <button class="btn-del btn ms-1" title="מחק" onclick="confirmDelete({{ row['_row_id'] }})">
                 <i class="bi bi-trash-fill"></i>
               </button>
             </td>
@@ -514,6 +535,50 @@
       timer = setTimeout(() => document.getElementById('filterForm').submit(), 400);
     });
   }
+
+  // Filter memory — persist to localStorage, restore when no URL params
+  const FILTER_KEY = 'gadash_filters';
+  const filterForm = document.getElementById('filterForm');
+  const hasUrlFilters = location.search.length > 1;
+  if (filterForm) {
+    if (!hasUrlFilters) {
+      const saved = JSON.parse(localStorage.getItem(FILTER_KEY) || '{}');
+      ['client','date_from','date_to','task'].forEach(k => {
+        const el = filterForm.querySelector(`[name="${k}"]`);
+        if (el && saved[k]) { el.value = saved[k]; }
+      });
+    }
+    filterForm.addEventListener('submit', () => {
+      const data = {};
+      ['client','date_from','date_to','task'].forEach(k => {
+        const el = filterForm.querySelector(`[name="${k}"]`);
+        if (el) data[k] = el.value;
+      });
+      localStorage.setItem(FILTER_KEY, JSON.stringify(data));
+    });
+    document.querySelector('a[href="/"]')?.addEventListener('click', () => {
+      localStorage.removeItem(FILTER_KEY);
+    });
+  }
+
+  // Bulk-select checkboxes
+  const selectAll = document.getElementById('selectAll');
+  const bulkBtn   = document.getElementById('bulkDeleteBtn');
+  const countSpan = document.getElementById('selectedCount');
+  function updateBulkBtn() {
+    const checked = document.querySelectorAll('.row-check:checked').length;
+    if (bulkBtn) { bulkBtn.style.display = checked > 0 ? '' : 'none'; }
+    if (countSpan) countSpan.textContent = checked;
+  }
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.row-check').forEach(cb => { cb.checked = selectAll.checked; });
+      updateBulkBtn();
+    });
+  }
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.addEventListener('change', updateBulkBtn);
+  });
 
   // Table sort
   const table = document.getElementById('mainTable');
