@@ -18,7 +18,7 @@ TOKEN = os.getenv("BOT_TOKEN")
 MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM = range(10)
 
 TASK_CHOICES = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
-START_KEYBOARD = [["כן, רוצה להתחיל"], ["לא, תודה"]]
+CONFIRM_KEYBOARD = [["כן", "לא"]]
 MENU_KEYBOARD = [
     ["הזן עבודה חדשה"],
     ["5 עבודות אחרונות"],
@@ -99,38 +99,50 @@ def save_data_to_gsheet(df: pd.DataFrame):
 
 # ── Telegram Bot ───────────────────────────────────────────────────────────────
 
+def _menu_markup():
+    return ReplyKeyboardMarkup(MENU_KEYBOARD, resize_keyboard=True)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("[BOT] /start received from", update.message.from_user.id, flush=True)
     await update.message.reply_text(
-        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nרוצה להתחיל להזין עבודה חדשה?',
-        reply_markup=ReplyKeyboardMarkup(START_KEYBOARD, one_time_keyboard=True, resize_keyboard=True),
+        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
+        reply_markup=_menu_markup(),
     )
     return MENU
 
 
 async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text == "הזן עבודה חדשה":
+        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=ReplyKeyboardRemove())
+        return CLIENT
+    elif text == "5 עבודות אחרונות":
+        await bot_recent(update, context)
+        return MENU
+    elif text == "סיים":
+        await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
+        return ConversationHandler.END
     await update.message.reply_text(
-        "שלום! רוצה להתחיל להזין עבודה חדשה?",
-        reply_markup=ReplyKeyboardMarkup(START_KEYBOARD, one_time_keyboard=True, resize_keyboard=True),
+        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
+        reply_markup=_menu_markup(),
     )
     return MENU
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if text in ("כן, רוצה להתחיל", "הזן עבודה חדשה"):
+    if text == "הזן עבודה חדשה":
         await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=ReplyKeyboardRemove())
         return CLIENT
     elif text == "5 עבודות אחרונות":
         await bot_recent(update, context)
         return MENU
-    elif text in ("סיים", "לא, תודה"):
+    elif text == "סיים":
         await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
     else:
-        await update.message.reply_text(
-            "בחר אפשרות מהתפריט.",
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYBOARD, resize_keyboard=True),
-        )
+        await update.message.reply_text("בחר אפשרות מהתפריט.", reply_markup=_menu_markup())
         return MENU
 
 
@@ -138,7 +150,7 @@ async def bot_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         df = load_data_from_gsheet()
         if df.empty:
-            await update.message.reply_text("אין עבודות רשומות עדיין.")
+            await update.message.reply_text("אין עבודות רשומות עדיין.", reply_markup=_menu_markup())
             return
         lines = ["📄 5 העבודות האחרונות:\n"]
         for _, row in df.tail(5).iterrows():
@@ -146,12 +158,9 @@ async def bot_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• {row.get('תאריך','')} | {row.get('עבודה','')} | "
                 f"{row.get('שם חלקה','')} | {row.get('כמות','')} | {row.get('מזין','')}"
             )
-        await update.message.reply_text(
-            "\n".join(lines),
-            reply_markup=ReplyKeyboardMarkup(MENU_KEYBOARD, resize_keyboard=True),
-        )
+        await update.message.reply_text("\n".join(lines), reply_markup=_menu_markup())
     except Exception as e:
-        await update.message.reply_text(f"שגיאה: {e}")
+        await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
 
 
 async def client_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,7 +223,8 @@ async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["הערות"] = update.message.text.strip()
     summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items())
     await update.message.reply_text(
-        f"סיכום לפני שמירה:\n\n{summary}\n\nשלח 'כן' לשמירה או 'לא' לביטול."
+        f"סיכום לפני שמירה:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
+        reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
     )
     return CONFIRM
 
@@ -231,10 +241,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ בוטל.")
     context.user_data.clear()
-    await update.message.reply_text(
-        "מה תרצה לעשות?",
-        reply_markup=ReplyKeyboardMarkup(MENU_KEYBOARD, one_time_keyboard=True, resize_keyboard=True),
-    )
+    await update.message.reply_text("מה תרצה לעשות?", reply_markup=_menu_markup())
     return MENU
 
 
@@ -249,8 +256,17 @@ def start_telegram_bot():
         print("❌ BOT_TOKEN not set — Telegram bot will not start")
         return
 
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    telegram_app = ApplicationBuilder().token(token).build()
+    print("[BOT] Thread starting...", flush=True)
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        print("[BOT] Event loop created", flush=True)
+        telegram_app = ApplicationBuilder().token(token).build()
+        print("[BOT] App built OK", flush=True)
+    except Exception as e:
+        print(f"[BOT] ERROR: {e}", flush=True)
+        import traceback; traceback.print_exc()
+        return
 
     conv = ConversationHandler(
         entry_points=[
@@ -269,7 +285,10 @@ def start_telegram_bot():
             NOTE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, note)],
             CONFIRM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
         },
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+            CommandHandler("start", start),
+        ],
     )
     telegram_app.add_handler(conv)
     telegram_app.run_polling()
@@ -286,34 +305,54 @@ def index():
         df = load_data_from_gsheet()
         total_count = len(df)
 
-        # Preserve the original GSheets row index BEFORE sorting/filtering
-        # so that edit/delete routes use the correct row.
+        # Stats for dashboard cards
+        today_str = date.today().strftime("%Y-%m-%d")
+        month_prefix = date.today().strftime("%Y-%m")
+        month_count = int(df["תאריך"].str.startswith(month_prefix).sum()) if total_count else 0
+        top_client = df["שם לקוח"].mode()[0] if total_count else "—"
+        top_task = df["עבודה"].mode()[0] if total_count else "—"
+
+        # Preserve original GSheet row index before sort/filter
         df = df.reset_index().rename(columns={"index": "_row_id"})
         df = df.sort_values(by="תאריך", ascending=False)
 
         client_filter = request.args.get("client", "").strip()
-        date_filter = request.args.get("date", "").strip()
+        date_filter   = request.args.get("date", "").strip()
+        task_filter   = request.args.get("task", "").strip()
 
         if client_filter:
             df = df[df["שם לקוח"].str.contains(client_filter, case=False, na=False)]
         if date_filter:
             df = df[df["תאריך"] == date_filter]
+        if task_filter:
+            df = df[df["עבודה"] == task_filter]
 
         records = df.to_dict(orient="records")
+        task_options = ["חריש", "ריסוס", "קציר", "דיסוק", "אחר"]
         return render_template(
             "index.html",
             records=records,
             total_count=total_count,
+            month_count=month_count,
+            top_client=top_client,
+            top_task=top_task,
             client_filter=client_filter,
             date_filter=date_filter,
+            task_filter=task_filter,
+            task_options=task_options,
         )
     except Exception as e:
         return render_template(
             "index.html",
             records=[],
             total_count=0,
+            month_count=0,
+            top_client="—",
+            top_task="—",
             client_filter="",
             date_filter="",
+            task_filter="",
+            task_options=[],
             error=str(e),
         )
 
