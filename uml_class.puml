@@ -1,0 +1,78 @@
+@startuml
+title Gadash Management System — Class Diagram
+
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #e8f0fb
+  BorderColor #3578c8
+  HeaderBackgroundColor #1a2f4e
+  HeaderFontColor #ffffff
+  ArrowColor #1a2f4e
+}
+
+class FlaskApp {
+  +app: Flask
+  +COLUMNS: list
+  --
+  +index(): Response
+  +add(): Response
+  +edit(row_id: int): Response
+  +delete(row_id: int): Response
+  +import_data(): Response
+  +export(): Response
+}
+
+class GoogleSheetsDB {
+  -_gs_client: gspread.Client
+  --
+  +_get_sheet(): Worksheet
+  +load_data_from_gsheet(): DataFrame
+  +append_row_to_gsheet(row: dict): void
+  +save_data_to_gsheet(df: DataFrame): void
+}
+
+class TelegramBot {
+  +token: str
+  +MENU: int = 0
+  +CLIENT: int = 1
+  +DATE: int = 2
+  +TASK: int = 3
+  +FIELD: int = 4
+  +AMOUNT: int = 5
+  +TOOL: int = 6
+  +OPERATOR: int = 7
+  +NOTE: int = 8
+  +CONFIRM: int = 9
+  --
+  +start(update, context): int
+  +menu_choice(update, context): int
+  +client_step(update, context): int
+  +date_input(update, context): int
+  +task(update, context): int
+  +field(update, context): int
+  +amount(update, context): int
+  +tool(update, context): int
+  +operator_step(update, context): int
+  +note(update, context): int
+  +confirm(update, context): int
+  +cancel(update, context): int
+}
+
+class WorkRecord {
+  +client_name: str
+  +date: str
+  +task_type: str
+  +field_name: str
+  +quantity: str
+  +equipment: str
+  +operator: str
+  +notes: str
+  +entered_by: str
+}
+
+FlaskApp ..> GoogleSheetsDB : uses
+TelegramBot ..> GoogleSheetsDB : uses
+GoogleSheetsDB ..> WorkRecord : manages
+FlaskApp ..> WorkRecord : creates / updates
+
+@enduml

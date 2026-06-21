@@ -1,0 +1,64 @@
+@startuml
+title Gadash Bot — State Machine Diagram (מצבי שיחה)
+
+skinparam state {
+  BackgroundColor #e8f0fb
+  BorderColor #3578c8
+  ArrowColor #1a2f4e
+  StartColor #1a2f4e
+  EndColor #1a2f4e
+}
+
+[*] --> MENU : /start
+
+state MENU : תפריט ראשי
+state CLIENT : המתנה לשם לקוח
+state DATE : המתנה לתאריך
+state TASK : בחירת סוג עבודה
+state FIELD : המתנה לשם חלקה
+state AMOUNT : המתנה לכמות
+state TOOL : המתנה לכלי
+state OPERATOR : המתנה לשם מפעיל
+state NOTE : המתנה להערות
+state CONFIRM : אישור / ביטול
+state END : סיום שיחה
+
+MENU --> CLIENT : "הזן עבודה חדשה" / "Yes, let's start"
+MENU --> MENU : "5 עבודות אחרונות" [מציג 5 רשומות]
+MENU --> END : "סיים" / "No, thanks"
+
+CLIENT --> DATE : [קלט שם לקוח]
+DATE --> TASK : [תאריך תקין]
+DATE --> DATE : [תאריך שגוי]\nשגיאה + ניסיון חוזר
+TASK --> FIELD : [בחירת סוג עבודה]
+FIELD --> AMOUNT : [קלט שם חלקה]
+AMOUNT --> TOOL : [קלט כמות]
+TOOL --> OPERATOR : [קלט כלי]
+OPERATOR --> NOTE : [קלט שם מפעיל]
+NOTE --> CONFIRM : [קלט הערות]\nהצגת סיכום
+
+CONFIRM --> MENU : "כן"\nשמירה ב-Google Sheets\nentered_by = Telegram username
+CONFIRM --> MENU : "לא" / /cancel\nביטול
+
+CLIENT --> END : /cancel
+DATE --> END : /cancel
+TASK --> END : /cancel
+FIELD --> END : /cancel
+AMOUNT --> END : /cancel
+TOOL --> END : /cancel
+OPERATOR --> END : /cancel
+NOTE --> END : /cancel
+
+END --> [*]
+
+note right of DATE
+  ניתן לכתוב "היום"
+  לתאריך של היום
+end note
+
+note right of CONFIRM
+  מכל מצב: /cancel מעביר ל-END
+  /start מעביר ל-MENU
+end note
+
+@enduml
