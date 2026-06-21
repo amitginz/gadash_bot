@@ -1,0 +1,17 @@
+.git
+venv
+__pycache__
+*.pyc
+*.pyo
+.env
+credentials.json
+*.docx
+*.png
+*.jpg
+~$*
+generate_readme.py
+generate_report.py
+test_err.txt
+test_out.txt
+render.yaml
+dockerignore

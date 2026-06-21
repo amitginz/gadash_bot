@@ -291,7 +291,14 @@ def start_telegram_bot():
         ],
     )
     telegram_app.add_handler(conv)
-    telegram_app.run_polling()
+
+    async def _run():
+        async with telegram_app:
+            await telegram_app.updater.start_polling()
+            await telegram_app.start()
+            await asyncio.Event().wait()
+
+    loop.run_until_complete(_run())
 
 
 # ── Flask Web App ──────────────────────────────────────────────────────────────
