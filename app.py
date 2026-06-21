@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file, flash, session
+from flask import Flask, render_template, request, redirect, url_for, send_file, flash, session, jsonify
 from functools import wraps
 from urllib.parse import urlencode
 import pandas as pd
@@ -14,26 +14,26 @@ from telegram.ext import (
 )
 from io import BytesIO
 from dataclasses import dataclass
-import os, json, time, math, re
+import os, json, time, math, re, secrets, csv
 
-TOKEN = os.getenv("BOT_TOKEN")
-WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://gadash-bot.fly.dev")
-PAGE_SIZE = 50
+WEB_APP_URL      = os.environ.get("WEB_APP_URL", "https://gadash-bot.fly.dev")
+PAGE_SIZE        = 50
 SUBSCRIBERS_FILE = "subscribers.json"
+AUDIT_LOG_FILE   = "audit.log"
 
 MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH = range(11)
 
-TASK_CHOICES = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
+TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
-NOTES_KEYBOARD = [["ללא הערות"]]
-MENU_KEYBOARD = [
+NOTES_KEYBOARD  = [["ללא הערות"]]
+MENU_KEYBOARD   = [
     ["הזן עבודה חדשה"],
     ["5 עבודות אחרונות", "חפש לפי לקוח"],
     ["סטטיסטיקות", "ערוך אחרונה"],
     ["סיים"],
 ]
 
-COLUMNS = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמות", "כלי", "מפעיל", "הערות", "מזין"]
+COLUMNS     = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמות", "כלי", "מפעיל", "הערות", "מזין"]
 VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
 
 
@@ -193,7 +193,40 @@ def save_data_to_gsheet(df: pd.DataFrame):
     _invalidate_cache()
 
 
-# ── Subscriber management (daily reminder) ────────────────────────────────────
+# ── Audit log ──────────────────────────────────────────────────────────────────
+
+_audit_lock = threading.Lock()
+
+
+def _log_audit(action: str, user: str, detail: str):
+    entry = json.dumps({
+        "ts":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "action": action,
+        "user":   user,
+        "detail": detail,
+    }, ensure_ascii=False)
+    with _audit_lock:
+        try:
+            with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(entry + "\n")
+        except Exception:
+            pass
+
+
+def _read_audit_log(limit: int = 200) -> list:
+    if not os.path.exists(AUDIT_LOG_FILE):
+        return []
+    try:
+        with _audit_lock:
+            with open(AUDIT_LOG_FILE, encoding="utf-8") as f:
+                lines = f.readlines()
+        entries = [json.loads(l) for l in lines if l.strip()]
+        return list(reversed(entries[-limit:]))
+    except Exception:
+        return []
+
+
+# ── Subscriber management ──────────────────────────────────────────────────────
 
 def _get_subscribers() -> set:
     try:
@@ -439,6 +472,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             entry = WorkEntry.from_bot(context.user_data, update.message.from_user.full_name)
             append_row_to_gsheet(entry)
+            _log_audit("add", entry.entered_by, f"{entry.client} | {entry.date} | {entry.task}")
             await update.message.reply_text("✅ נשמר בהצלחה!")
         except ValueError as e:
             await update.message.reply_text(f"❌ שגיאת אימות: {e}")
@@ -448,6 +482,22 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ בוטל.")
     context.user_data.clear()
     await update.message.reply_text("מה תרצה לעשות?", reply_markup=_menu_markup())
+    return MENU
+
+
+async def bot_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        df = load_data_from_gsheet()
+        if df.empty:
+            await update.message.reply_text("אין עבודות למחיקה.", reply_markup=_menu_markup())
+            return MENU
+        last = df.iloc[-1]
+        detail = f"{last.get('שם לקוח','')} | {last.get('תאריך','')} | {last.get('עבודה','')}"
+        save_data_to_gsheet(df.iloc[:-1].reset_index(drop=True))
+        _log_audit("undo", update.message.from_user.full_name, detail)
+        await update.message.reply_text(f"✅ הרשומה האחרונה נמחקה:\n{detail}", reply_markup=_menu_markup())
+    except Exception as e:
+        await update.message.reply_text(f"❌ שגיאה: {e}", reply_markup=_menu_markup())
     return MENU
 
 
@@ -493,12 +543,13 @@ def start_telegram_bot():
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
+            CommandHandler("undo", bot_undo),
             CommandHandler("start", start),
         ],
     )
     telegram_app.add_handler(conv)
 
-    async def _daily_reminder():
+    async def _scheduled_reports():
         while True:
             now = datetime.now()
             next_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
@@ -507,27 +558,48 @@ def start_telegram_bot():
             await asyncio.sleep((next_8am - now).total_seconds())
             try:
                 df = load_data_from_gsheet()
+                subs = _get_subscribers()
+                if not subs:
+                    continue
+
+                # Daily summary
                 yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
                 y_df = df[df["תאריך"] == yesterday]
-                if y_df.empty:
-                    continue
-                lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות:\n"]
-                for _, row in y_df.iterrows():
-                    lines.append(
-                        f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
-                        f"{row.get('שם חלקה','')} | {row.get('כמות','')}"
-                    )
-                msg = "\n".join(lines)
-                for chat_id in _get_subscribers():
-                    try:
-                        await telegram_app.bot.send_message(chat_id=chat_id, text=msg)
-                    except Exception:
-                        pass
+                if not y_df.empty:
+                    lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות:\n"]
+                    for _, row in y_df.iterrows():
+                        lines.append(
+                            f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
+                            f"{row.get('שם חלקה','')} | {row.get('כמות','')}"
+                        )
+                    daily_msg = "\n".join(lines)
+                    for chat_id in subs:
+                        try:
+                            await telegram_app.bot.send_message(chat_id=chat_id, text=daily_msg)
+                        except Exception:
+                            pass
+
+                # Weekly summary every Monday
+                if datetime.now().weekday() == 0:
+                    week_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+                    week_df = df[df["תאריך"] >= week_start]
+                    if not week_df.empty:
+                        top_clients = week_df["שם לקוח"].value_counts().head(3)
+                        lines = [f"📊 סיכום שבועי (7 ימים אחרונים) — {len(week_df)} עבודות:\n"]
+                        lines.append("לקוחות מובילים:")
+                        for client, cnt in top_clients.items():
+                            lines.append(f"  • {client}: {cnt}")
+                        weekly_msg = "\n".join(lines)
+                        for chat_id in subs:
+                            try:
+                                await telegram_app.bot.send_message(chat_id=chat_id, text=weekly_msg)
+                            except Exception:
+                                pass
             except Exception as e:
-                print(f"[BOT] Daily reminder error: {e}")
+                print(f"[BOT] Scheduled report error: {e}")
 
     async def _run():
-        asyncio.create_task(_daily_reminder())
+        asyncio.create_task(_scheduled_reports())
         async with telegram_app:
             await telegram_app.updater.start_polling()
             await telegram_app.start()
@@ -536,13 +608,60 @@ def start_telegram_bot():
     loop.run_until_complete(_run())
 
 
-# ── Flask Web App ──────────────────────────────────────────────────────────────
+# ── Flask App ──────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 _current_password = os.environ.get("WEB_PASSWORD", "gadash2025")
 
+# ── CSRF (manual, no extra dependency needed) ──────────────────────────────────
+
+def _get_csrf_token() -> str:
+    if "_csrf" not in session:
+        session["_csrf"] = secrets.token_hex(32)
+    return session["_csrf"]
+
+app.jinja_env.globals["csrf_token"] = _get_csrf_token
+
+
+@app.before_request
+def _csrf_protect():
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    if request.endpoint in ("login", "static"):
+        return
+    if not session.get("logged_in"):
+        return
+    token = (request.form.get("csrf_token")
+             or request.headers.get("X-CSRFToken"))
+    if not token or token != session.get("_csrf"):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "CSRF token invalid"}), 403
+        flash("בקשה לא תקינה (CSRF) ❌", "danger")
+        return redirect(request.referrer or url_for("index"))
+
+
+# ── Rate limiter on login ──────────────────────────────────────────────────────
+
+_login_attempts: dict = {}
+_LOGIN_MAX  = 5
+_LOGIN_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(ip: str) -> bool:
+    now = time.time()
+    attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW]
+    _login_attempts[ip] = attempts
+    return len(attempts) >= _LOGIN_MAX
+
+
+def _record_attempt(ip: str):
+    _login_attempts.setdefault(ip, []).append(time.time())
+
+
+# ── Auth ───────────────────────────────────────────────────────────────────────
 
 def login_required(f):
     @wraps(f)
@@ -557,17 +676,24 @@ def login_required(f):
 def login():
     if session.get("logged_in"):
         return redirect(url_for("index"))
+    ip = request.remote_addr
     if request.method == "POST":
+        if _check_rate_limit(ip):
+            flash("יותר מדי ניסיונות — המתן דקה ❌", "danger")
+            return render_template("login.html")
         if request.form.get("password", "") == _current_password:
+            session.permanent = True
             session["logged_in"] = True
             return redirect(url_for("index"))
-        flash("סיסמה שגויה ❌", "danger")
+        _record_attempt(ip)
+        remaining = _LOGIN_MAX - len(_login_attempts.get(ip, []))
+        flash(f"סיסמה שגויה ❌ ({remaining} ניסיונות נותרו)", "danger")
     return render_template("login.html")
 
 
 @app.route("/logout")
 def logout():
-    session.pop("logged_in", None)
+    session.clear()
     return redirect(url_for("login"))
 
 
@@ -591,6 +717,8 @@ def change_password():
     return render_template("change_password.html")
 
 
+# ── Filters helper ─────────────────────────────────────────────────────────────
+
 def _apply_filters(df):
     client_filter = request.args.get("client", "").strip()
     date_from     = request.args.get("date_from", "").strip()
@@ -607,13 +735,23 @@ def _apply_filters(df):
     return df
 
 
+def _autocomplete_lists(df: pd.DataFrame) -> dict:
+    return {
+        "client_list":   sorted(df["שם לקוח"].dropna().unique().tolist()),
+        "field_list":    sorted(df["שם חלקה"].dropna().unique().tolist()),
+        "operator_list": sorted(df["מפעיל"].dropna().unique().tolist()),
+        "tool_list":     sorted(df["כלי"].dropna().unique().tolist()),
+    }
+
+
+# ── Web routes ─────────────────────────────────────────────────────────────────
+
 @app.route("/")
 @login_required
 def index():
     try:
         df = load_data_from_gsheet()
-        total_count = len(df)
-
+        total_count  = len(df)
         month_prefix = date.today().strftime("%Y-%m")
         month_count  = int(df["תאריך"].str.startswith(month_prefix).sum()) if total_count else 0
         top_client   = df["שם לקוח"].mode()[0] if total_count else "—"
@@ -645,7 +783,7 @@ def index():
             date_from=request.args.get("date_from", "").strip(),
             date_to=request.args.get("date_to", "").strip(),
             task_filter=request.args.get("task", "").strip(),
-            task_options=["חריש", "ריסוס", "קציר", "דיסוק", "אחר"],
+            task_options=sorted(VALID_TASKS),
             task_counts=task_counts,
             client_counts=client_counts,
             page=page,
@@ -670,6 +808,7 @@ def add():
         try:
             entry = WorkEntry.from_form(request.form, entered_by="Web")
             append_row_to_gsheet(entry)
+            _log_audit("add", "Web", f"{entry.client} | {entry.date} | {entry.task}")
             flash("הרשומה נוספה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except ValueError as e:
@@ -679,20 +818,19 @@ def add():
     prefill = {col: request.args.get(col, "") for col in COLUMNS if col != "מזין"}
     if not prefill.get("תאריך"):
         prefill["תאריך"] = today
-    client_list = []
+    lists = {}
     try:
-        df = load_data_from_gsheet()
-        client_list = sorted(df["שם לקוח"].dropna().unique().tolist())
+        lists = _autocomplete_lists(load_data_from_gsheet())
     except Exception:
         pass
-    return render_template("add.html", today=today, client_list=client_list, prefill=prefill)
+    return render_template("add.html", today=today, prefill=prefill, **lists)
 
 
 @app.route("/duplicate/<int:row_id>")
 @login_required
 def duplicate(row_id):
     try:
-        df = load_data_from_gsheet()
+        df  = load_data_from_gsheet()
         row = df.iloc[row_id].to_dict()
         row["תאריך"] = date.today().strftime("%Y-%m-%d")
         qs = urlencode({k: v for k, v in row.items() if k != "מזין"})
@@ -712,20 +850,21 @@ def edit(row_id):
             for key, value in entry.to_dict().items():
                 df.at[row_id, key] = value
             save_data_to_gsheet(df)
+            _log_audit("edit", "Web", f"row {row_id}: {entry.client} | {entry.date}")
             flash("הרשומה עודכנה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except ValueError as e:
             flash(f"שגיאת אימות: {e} ❌", "danger")
             try:
-                row_data = df.iloc[row_id].to_dict()
-                return render_template("edit.html", row=row_data, row_id=row_id)
+                lists = _autocomplete_lists(df)
+                return render_template("edit.html", row=df.iloc[row_id].to_dict(), row_id=row_id, **lists)
             except Exception:
                 pass
         except Exception as e:
             flash(f"שגיאה בעדכון: {e} ❌", "danger")
     try:
-        row_data = df.iloc[row_id].to_dict()
-        return render_template("edit.html", row=row_data, row_id=row_id)
+        lists = _autocomplete_lists(df)
+        return render_template("edit.html", row=df.iloc[row_id].to_dict(), row_id=row_id, **lists)
     except Exception as e:
         return f"שגיאה בטעינת שורה: {e}"
 
@@ -734,8 +873,10 @@ def edit(row_id):
 @login_required
 def delete(row_id):
     df = load_data_from_gsheet()
+    detail = df.iloc[row_id].get("שם לקוח", str(row_id)) if row_id < len(df) else str(row_id)
     df = df.drop(index=row_id).reset_index(drop=True)
     save_data_to_gsheet(df)
+    _log_audit("delete", "Web", f"row {row_id}: {detail}")
     flash("הרשומה נמחקה ✅", "success")
     return redirect(url_for("index"))
 
@@ -750,6 +891,7 @@ def bulk_delete():
     df = load_data_from_gsheet()
     df = df.drop(index=row_ids).reset_index(drop=True)
     save_data_to_gsheet(df)
+    _log_audit("bulk-delete", "Web", f"{len(row_ids)} rows: {row_ids}")
     flash(f"{len(row_ids)} רשומות נמחקו ✅", "success")
     return redirect(url_for("index"))
 
@@ -776,6 +918,13 @@ def summary():
         return render_template("summary.html", monthly=monthly, client_totals=client_totals, task_types=task_types)
     except Exception as e:
         return render_template("summary.html", monthly=[], client_totals=[], task_types=[], error=str(e))
+
+
+@app.route("/audit")
+@login_required
+def audit():
+    entries = _read_audit_log(200)
+    return render_template("audit.html", entries=entries)
 
 
 @app.route("/print")
@@ -821,10 +970,11 @@ def import_data():
                 if not new_df.empty:
                     combined = pd.concat([existing_df, new_df], ignore_index=True) if not existing_df.empty else new_df
                     save_data_to_gsheet(combined)
+                    _log_audit("import", "Web", f"{len(new_df)} rows imported, {skipped} skipped")
                     flash(f"{len(new_df)} שורות יובאו בהצלחה ✅", "success")
                     return redirect(url_for("index"))
                 else:
-                    flash("כל השורות בקובץ כבר קיימות — לא יובא דבר ⚠️", "warning")
+                    flash("כל השורות בקובץ כבר קיימות ⚠️", "warning")
             except Exception as e:
                 flash(f"שגיאה בייבוא: {e} ❌", "danger")
         else:
@@ -844,12 +994,51 @@ def export():
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Data")
     output.seek(0)
-    return send_file(
-        output,
-        as_attachment=True,
-        download_name="gadash_data.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    return send_file(output, as_attachment=True, download_name="gadash_data.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/export/csv")
+@login_required
+def export_csv():
+    df = load_data_from_gsheet()
+    if df.empty:
+        flash("אין נתונים לייצוא ❌", "danger")
+        return redirect(url_for("index"))
+    df = _apply_filters(df)
+    output = BytesIO()
+    df.to_csv(output, index=False, encoding="utf-8-sig")
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name="gadash_data.csv",
+                     mimetype="text/csv; charset=utf-8-sig")
+
+
+# ── REST API ───────────────────────────────────────────────────────────────────
+
+@app.route("/api/entries")
+@login_required
+def api_entries():
+    df = load_data_from_gsheet()
+    df = _apply_filters(df)
+    return jsonify(df.fillna("").to_dict(orient="records"))
+
+
+@app.route("/api/entries/<int:row_id>", methods=["PATCH"])
+@login_required
+def api_patch_entry(row_id):
+    data  = request.get_json(force=True, silent=True) or {}
+    field = data.get("field", "")
+    value = str(data.get("value", ""))
+    editable = [c for c in COLUMNS if c != "מזין"]
+    if field not in editable:
+        return jsonify({"error": f"שדה לא תקין: {field}"}), 400
+    df = load_data_from_gsheet()
+    if row_id >= len(df):
+        return jsonify({"error": "שורה לא קיימת"}), 404
+    df.at[row_id, field] = value
+    save_data_to_gsheet(df)
+    _log_audit("edit-inline", "Web", f"row {row_id}: {field}={value}")
+    return jsonify({"ok": True, "row_id": row_id, "field": field, "value": value})
 
 
 # ── Start bot thread ───────────────────────────────────────────────────────────

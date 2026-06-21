@@ -6,3 +6,5 @@ gspread==6.1.2
 google-auth==2.29.0
 gunicorn==21.2.0
 python-telegram-bot==20.7
+Flask-WTF==1.2.1
+Flask-Limiter==3.5.0

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>הוספת רשומה — גד"ש</title>
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
   <style>
@@ -79,15 +80,27 @@
         </div>
         <div class="col-sm-6">
           <label class="form-label">שם חלקה</label>
-          <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳" value="{{ prefill.get('שם חלקה', '') }}" />
+          <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳"
+                 value="{{ prefill.get('שם חלקה', '') }}" list="fieldList" autocomplete="off" />
+          <datalist id="fieldList">
+            {% for f in field_list %}<option value="{{ f }}">{% endfor %}
+          </datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">מפעיל</label>
-          <input type="text" class="form-control" name="מפעיל" placeholder="שם המפעיל" value="{{ prefill.get('מפעיל', '') }}" />
+          <input type="text" class="form-control" name="מפעיל" placeholder="שם המפעיל"
+                 value="{{ prefill.get('מפעיל', '') }}" list="operatorList" autocomplete="off" />
+          <datalist id="operatorList">
+            {% for o in operator_list %}<option value="{{ o }}">{% endfor %}
+          </datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">כלי</label>
-          <input type="text" class="form-control" name="כלי" placeholder="לדוג׳ טרקטור" value="{{ prefill.get('כלי', '') }}" />
+          <input type="text" class="form-control" name="כלי" placeholder="לדוג׳ טרקטור"
+                 value="{{ prefill.get('כלי', '') }}" list="toolList" autocomplete="off" />
+          <datalist id="toolList">
+            {% for t in tool_list %}<option value="{{ t }}">{% endfor %}
+          </datalist>
         </div>
         <div class="col-12">
           <label class="form-label">הערות</label>

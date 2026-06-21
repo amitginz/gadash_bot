@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <title>דוח עבודות גד"ש</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
@@ -159,6 +160,27 @@
     .modal-content { border-radius: 14px; border: none; }
     .modal-header  { border-bottom: none; }
     .modal-footer  { border-top: none; }
+
+    /* ── Inline edit ── */
+    td.editable { cursor: pointer; }
+    td.editable:hover { background: #fffbeb !important; }
+    td.editable input { border: 1px solid #3578c8; border-radius: 4px; padding: 2px 6px; width: 100%; font-size: .875rem; }
+
+    /* ── Mobile card view ── */
+    @media (max-width: 767px) {
+      .table-responsive { display: none !important; }
+      .mobile-cards { display: block !important; }
+    }
+    @media (min-width: 768px) {
+      .mobile-cards { display: none !important; }
+    }
+    .mobile-card {
+      background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
+      padding: 1rem; margin-bottom: .75rem;
+    }
+    .mobile-card .mc-client { font-weight: 700; font-size: 1rem; color: #1a2f4e; }
+    .mobile-card .mc-meta   { font-size: .82rem; color: #64748b; margin: .2rem 0; }
+    .mobile-card .mc-actions { margin-top: .6rem; display: flex; gap: .4rem; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -171,6 +193,7 @@
     <a href="/export"><i class="bi bi-file-earmark-excel"></i> ייצוא</a>
     <a href="/import"><i class="bi bi-upload"></i> ייבוא</a>
     <a href="/summary"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
+    <a href="/audit"><i class="bi bi-clock-history"></i> לוג</a>
     <a href="/change-password"><i class="bi bi-key"></i> סיסמה</a>
     <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
   </div>
@@ -326,12 +349,18 @@
       {% if task_filter %}{% set _ = export_params.append("task=" ~ task_filter) %}{% endif %}
       {% if export_params %}
       <a href="/export?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
-        <i class="bi bi-file-earmark-excel"></i> ייצא ממוסנן
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </a>
+      <a href="/export/csv?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
+        <i class="bi bi-filetype-csv"></i> CSV
       </a>
       <a href="/print?{{ export_params | join('&') }}" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
         <i class="bi bi-printer"></i> הדפס
       </a>
       {% else %}
+      <a href="/export/csv" class="btn btn-outline-success btn-sm px-3">
+        <i class="bi bi-filetype-csv"></i> CSV
+      </a>
       <a href="/print" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
         <i class="bi bi-printer"></i> הדפס
       </a>
@@ -371,18 +400,18 @@
         </thead>
         <tbody>
           {% for row in records %}
-          <tr>
+          <tr data-row-id="{{ row['_row_id'] }}">
             <td><input type="checkbox" class="row-check" name="row_ids" value="{{ row['_row_id'] }}" form="bulkDeleteForm"></td>
-            <td><strong>{{ row['שם לקוח'] }}</strong></td>
-            <td>{{ row['תאריך'] }}</td>
+            <td class="editable" data-field="שם לקוח"><strong>{{ row['שם לקוח'] }}</strong></td>
+            <td class="editable" data-field="תאריך">{{ row['תאריך'] }}</td>
             <td>
               <span class="badge-task badge-{{ row['עבודה'] }}">{{ row['עבודה'] }}</span>
             </td>
-            <td>{{ row['שם חלקה'] }}</td>
-            <td>{{ row['כמות'] }}</td>
-            <td>{{ row['כלי'] }}</td>
-            <td>{{ row['מפעיל'] }}</td>
-            <td class="text-muted" style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            <td class="editable" data-field="שם חלקה">{{ row['שם חלקה'] }}</td>
+            <td class="editable" data-field="כמות">{{ row['כמות'] }}</td>
+            <td class="editable" data-field="כלי">{{ row['כלי'] }}</td>
+            <td class="editable" data-field="מפעיל">{{ row['מפעיל'] }}</td>
+            <td class="editable text-muted" data-field="הערות" style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
               {{ row['הערות'] }}
             </td>
             <td class="text-muted small">{{ row['מזין'] }}</td>
@@ -414,6 +443,29 @@
       {% endif %}
     </div>
     {% endif %}
+  </div>
+
+  <!-- Mobile cards (shown only on small screens) -->
+  <div class="mobile-cards mt-2">
+    {% for row in records %}
+    <div class="mobile-card">
+      <div class="mc-client">{{ row['שם לקוח'] }}</div>
+      <div class="mc-meta">
+        <span class="badge-task badge-{{ row['עבודה'] }}">{{ row['עבודה'] }}</span>
+        &nbsp;{{ row['תאריך'] }}
+      </div>
+      {% if row['שם חלקה'] %}<div class="mc-meta">📍 {{ row['שם חלקה'] }} — {{ row['כמות'] }}</div>{% endif %}
+      {% if row['מפעיל'] %}<div class="mc-meta">👤 {{ row['מפעיל'] }} | 🚜 {{ row['כלי'] }}</div>{% endif %}
+      {% if row['הערות'] %}<div class="mc-meta text-muted">💬 {{ row['הערות'] }}</div>{% endif %}
+      <div class="mc-actions">
+        <a href="/edit/{{ row['_row_id'] }}" class="btn-edit btn btn-sm">✏️ עריכה</a>
+        <a href="/duplicate/{{ row['_row_id'] }}" class="btn btn-sm" style="color:#7c3aed;background:#ede9fe;border:none;border-radius:7px;padding:.25rem .55rem;">🔁 שכפל</a>
+        <button class="btn-del btn btn-sm" onclick="confirmDelete({{ row['_row_id'] }})">🗑️ מחק</button>
+      </div>
+    </div>
+    {% else %}
+    <p class="text-center text-muted py-4">אין רשומות להצגה</p>
+    {% endfor %}
   </div>
 
   <!-- Pagination -->
@@ -603,6 +655,56 @@
       });
     });
   }
+
+  // CSRF token for AJAX — auto-inject into all forms
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  document.querySelectorAll('form').forEach(form => {
+    if (!form.querySelector('[name="csrf_token"]')) {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = CSRF;
+      form.appendChild(inp);
+    }
+  });
+
+  // Inline cell editing — double-click any editable cell
+  document.querySelectorAll('td.editable').forEach(td => {
+    td.title = 'לחץ פעמיים לעריכה';
+    td.addEventListener('dblclick', () => {
+      if (td.querySelector('input')) return;
+      const rowId = td.closest('tr').dataset.rowId;
+      const field = td.dataset.field;
+      const orig  = td.innerText.trim();
+      td.innerHTML = `<input value="${orig.replace(/"/g, '&quot;')}" style="min-width:80px;" />`;
+      const inp = td.querySelector('input');
+      inp.focus(); inp.select();
+
+      const save = async () => {
+        const val = inp.value.trim();
+        if (val === orig) { td.textContent = orig; return; }
+        try {
+          const res  = await fetch(`/api/entries/${rowId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ field, value: val }),
+          });
+          const data = await res.json();
+          if (data.ok) {
+            td.innerHTML = field === 'שם לקוח' ? `<strong>${val}</strong>` : val;
+            td.style.background = '#d1fae5';
+            setTimeout(() => td.style.background = '', 1400);
+          } else {
+            alert('שגיאה: ' + (data.error || 'שגיאה לא ידועה'));
+            td.textContent = orig;
+          }
+        } catch { td.textContent = orig; }
+      };
+      inp.addEventListener('blur', save);
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { inp.blur(); }
+        if (e.key === 'Escape') { td.textContent = orig; }
+      });
+    });
+  });
 </script>
 </body>
 </html>
