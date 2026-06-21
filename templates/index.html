@@ -229,6 +229,24 @@
   </div>
   {% endif %}
 
+  <!-- Charts -->
+  {% if task_counts or client_counts %}
+  <div class="row g-3 mt-1">
+    <div class="col-12 col-md-6">
+      <div class="stat-card flex-column align-items-start p-3" style="height:220px;">
+        <p class="stat-label fw-bold mb-2">עבודות לפי סוג</p>
+        <canvas id="taskChart" style="max-height:170px;"></canvas>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="stat-card flex-column align-items-start p-3" style="height:220px;">
+        <p class="stat-label fw-bold mb-2">לקוחות מובילים</p>
+        <canvas id="clientChart" style="max-height:170px;"></canvas>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Filters -->
   <div class="filter-card mt-3">
     <form method="get" id="filterForm">
@@ -356,18 +374,64 @@
       <div class="modal-body text-muted small">פעולה זו אינה ניתנת לביטול. האם למחוק את הרשומה?</div>
       <div class="modal-footer pt-0">
         <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">ביטול</button>
-        <a id="deleteConfirmBtn" href="#" class="btn btn-sm btn-danger">מחק</a>
+        <form id="deleteForm" method="POST" style="display:inline;">
+          <button type="submit" class="btn btn-sm btn-danger">מחק</button>
+        </form>
       </div>
     </div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-  // Delete modal
+  // Delete modal — POST form
   function confirmDelete(rowId) {
-    document.getElementById('deleteConfirmBtn').href = '/delete/' + rowId;
+    document.getElementById('deleteForm').action = '/delete/' + rowId;
     new bootstrap.Modal(document.getElementById('deleteModal')).show();
+  }
+
+  // Charts
+  const TASK_COLORS = {
+    'חריש':  '#f59e0b', 'ריסוס': '#22c55e',
+    'קציר':  '#3b82f6', 'דיסוק': '#a855f7', 'אחר': '#94a3b8'
+  };
+  const taskData = {{ task_counts | tojson }};
+  if (Object.keys(taskData).length) {
+    const taskLabels  = Object.keys(taskData);
+    const taskValues  = Object.values(taskData);
+    const taskColors  = taskLabels.map(l => TASK_COLORS[l] || '#64748b');
+    new Chart(document.getElementById('taskChart'), {
+      type: 'doughnut',
+      data: { labels: taskLabels, datasets: [{ data: taskValues, backgroundColor: taskColors, borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'right', labels: { font: { size: 12 }, boxWidth: 14 } } } }
+    });
+  }
+
+  const clientData = {{ client_counts | tojson }};
+  if (Object.keys(clientData).length) {
+    const cLabels = Object.keys(clientData);
+    const cValues = Object.values(clientData);
+    new Chart(document.getElementById('clientChart'), {
+      type: 'bar',
+      data: { labels: cLabels, datasets: [{
+        data: cValues,
+        backgroundColor: '#3578c8cc',
+        borderColor: '#1a2f4e',
+        borderWidth: 1,
+        borderRadius: 6,
+      }]},
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { stepSize: 1 }, grid: { color: '#e2e8f0' } },
+          y: { ticks: { font: { size: 12 } } }
+        }
+      }
+    });
   }
 
   // Client live search (filter-as-you-type with 400ms debounce)

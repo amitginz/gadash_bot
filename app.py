@@ -11,7 +11,7 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from io import BytesIO
-import os, json
+import os, json, time, threading
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -30,51 +30,68 @@ COLUMNS = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמו
 
 # ── Google Sheets ──────────────────────────────────────────────────────────────
 
-_gs_client = None
+_gs_client  = None
+_gs_lock    = threading.Lock()
+_cache_data = None
+_cache_time = 0.0
+_CACHE_TTL  = 30  # seconds
+
+
+def _invalidate_cache():
+    global _cache_data, _cache_time
+    _cache_data = None
+    _cache_time = 0.0
 
 
 def _get_sheet():
     """Return a gspread Worksheet, reconnecting if the session expired."""
     global _gs_client
-    if _gs_client is None:
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        raw = os.environ.get("GOOGLE_CREDS")
-        if raw:
-            # Production: credentials supplied as JSON env var (Render / Fly.io)
-            creds = Credentials.from_service_account_info(json.loads(raw), scopes=scope)
-        elif os.path.exists("credentials.json"):
-            # Local development: use credentials.json file
-            creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
-        else:
-            raise RuntimeError(
-                "No Google credentials found. "
-                "Set GOOGLE_CREDS env var or place credentials.json in the project root."
-            )
-        _gs_client = gspread.authorize(creds)
-    try:
-        return _gs_client.open("Gadash Data").sheet1
-    except Exception:
-        _gs_client = None  # force reconnect next time
-        raise
+    with _gs_lock:
+        if _gs_client is None:
+            scope = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive",
+            ]
+            raw = os.environ.get("GOOGLE_CREDS")
+            if raw:
+                creds = Credentials.from_service_account_info(json.loads(raw), scopes=scope)
+            elif os.path.exists("credentials.json"):
+                creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
+            else:
+                raise RuntimeError(
+                    "No Google credentials found. "
+                    "Set GOOGLE_CREDS env var or place credentials.json in the project root."
+                )
+            _gs_client = gspread.authorize(creds)
+        try:
+            return _gs_client.open("Gadash Data").sheet1
+        except Exception:
+            _gs_client = None
+            raise
 
 
 def load_data_from_gsheet() -> pd.DataFrame:
+    global _cache_data, _cache_time
+    with _gs_lock:
+        if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
+            return _cache_data.copy()
     try:
         sheet = _get_sheet()
         all_values = sheet.get_all_values()
         if not all_values or len(all_values) < 2:
-            return pd.DataFrame(columns=COLUMNS)
-        headers = [h.strip() for h in all_values[0]]
-        records = [dict(zip(headers, row)) for row in all_values[1:] if any(row)]
-        df = pd.DataFrame(records)
-        # Ensure all expected columns exist
-        for col in COLUMNS:
-            if col not in df.columns:
-                df[col] = ""
-        return df[COLUMNS]
+            df = pd.DataFrame(columns=COLUMNS)
+        else:
+            headers = [h.strip() for h in all_values[0]]
+            records = [dict(zip(headers, row)) for row in all_values[1:] if any(row)]
+            df = pd.DataFrame(records)
+            for col in COLUMNS:
+                if col not in df.columns:
+                    df[col] = ""
+            df = df[COLUMNS]
+        with _gs_lock:
+            _cache_data = df
+            _cache_time = time.time()
+        return df.copy()
     except Exception as e:
         print(f"[GSheet] load error: {e}")
         return pd.DataFrame(columns=COLUMNS)
@@ -85,6 +102,7 @@ def append_row_to_gsheet(row: dict):
     sheet = _get_sheet()
     values = [str(row.get(col, "")) for col in COLUMNS]
     sheet.append_row(values, value_input_option="USER_ENTERED")
+    _invalidate_cache()
 
 
 def save_data_to_gsheet(df: pd.DataFrame):
@@ -95,6 +113,7 @@ def save_data_to_gsheet(df: pd.DataFrame):
     if not df.empty:
         rows = df[COLUMNS].fillna("").astype(str).values.tolist()
         sheet.append_rows(rows, value_input_option="USER_ENTERED")
+    _invalidate_cache()
 
 
 # ── Telegram Bot ───────────────────────────────────────────────────────────────
@@ -336,6 +355,12 @@ def index():
 
         records = df.to_dict(orient="records")
         task_options = ["חריש", "ריסוס", "קציר", "דיסוק", "אחר"]
+
+        # Chart data (full dataset, before filter)
+        full_df = load_data_from_gsheet()
+        task_counts = full_df["עבודה"].value_counts().to_dict()
+        client_counts = full_df["שם לקוח"].value_counts().head(6).to_dict()
+
         return render_template(
             "index.html",
             records=records,
@@ -347,6 +372,8 @@ def index():
             date_filter=date_filter,
             task_filter=task_filter,
             task_options=task_options,
+            task_counts=task_counts,
+            client_counts=client_counts,
         )
     except Exception as e:
         return render_template(
@@ -360,6 +387,8 @@ def index():
             date_filter="",
             task_filter="",
             task_options=[],
+            task_counts={},
+            client_counts={},
             error=str(e),
         )
 
@@ -396,7 +425,7 @@ def edit(row_id):
         return f"שגיאה בטעינת שורה: {e}"
 
 
-@app.route("/delete/<int:row_id>")
+@app.route("/delete/<int:row_id>", methods=["POST"])
 def delete(row_id):
     df = load_data_from_gsheet()
     df = df.drop(index=row_id).reset_index(drop=True)
