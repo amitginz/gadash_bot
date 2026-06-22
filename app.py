@@ -21,7 +21,7 @@ PAGE_SIZE        = 50
 SUBSCRIBERS_FILE = "subscribers.json"
 AUDIT_LOG_FILE   = "audit.log"
 
-MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH = range(11)
+MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT = range(12)
 
 TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
@@ -29,7 +29,7 @@ NOTES_KEYBOARD  = [["ללא הערות"]]
 MENU_KEYBOARD   = [
     ["הזן עבודה חדשה"],
     ["5 עבודות אחרונות", "חפש לפי לקוח"],
-    ["סטטיסטיקות", "ערוך אחרונה"],
+    ["סטטיסטיקות", "ערוך רשומה"],
     ["סיים"],
 ]
 
@@ -303,9 +303,8 @@ async def _handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
     elif text == "סטטיסטיקות":
         await bot_stats(update, context)
         return MENU
-    elif text == "ערוך אחרונה":
-        await bot_edit_last(update, context)
-        return MENU
+    elif text == "ערוך רשומה":
+        return await bot_edit_last(update, context)
     elif text == "סיים":
         await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
@@ -362,17 +361,46 @@ async def bot_edit_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
         df = load_data_from_gsheet()
         if df.empty:
             await update.message.reply_text("אין עבודות לעריכה.", reply_markup=_menu_markup())
-            return
-        last_idx = len(df) - 1
-        row = df.iloc[last_idx]
-        details = "\n".join(f"• {col}: {row.get(col, '')}" for col in COLUMNS)
+            return MENU
+        tail = df.tail(5)
+        lines = ["✏️ בחר רשומה לעריכה:\n"]
+        choices = []
+        indices = []
+        for i, (idx, row) in enumerate(tail.iterrows(), 1):
+            lines.append(f"{i}. {row.get('תאריך','')} | {row.get('שם לקוח','')} | {row.get('עבודה','')}")
+            choices.append([str(i)])
+            indices.append(idx)
+        context.user_data["_edit_indices"] = indices
         await update.message.reply_text(
-            f"✏️ הרשומה האחרונה:\n\n{details}\n\n"
-            f"לעריכה דרך האתר:\n{WEB_APP_URL}/edit/{last_idx}",
-            reply_markup=_menu_markup(),
+            "\n".join(lines),
+            reply_markup=ReplyKeyboardMarkup(choices, one_time_keyboard=True, resize_keyboard=True),
         )
+        return EDIT_SELECT
     except Exception as e:
         await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
+        return MENU
+
+
+async def bot_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    try:
+        n = int(text)
+        indices = context.user_data.get("_edit_indices", [])
+        if 1 <= n <= len(indices):
+            row_id = indices[n - 1]
+            df = load_data_from_gsheet()
+            row = df.iloc[row_id]
+            details = "\n".join(f"• {col}: {row.get(col, '')}" for col in COLUMNS)
+            await update.message.reply_text(
+                f"✏️ פרטי הרשומה:\n\n{details}\n\n🔗 לעריכה באתר:\n{WEB_APP_URL}/edit/{row_id}",
+                reply_markup=_menu_markup(),
+            )
+        else:
+            await update.message.reply_text("בחר מספר מהרשימה.", reply_markup=_menu_markup())
+    except ValueError:
+        await update.message.reply_text("בחר מספר מהרשימה.", reply_markup=_menu_markup())
+    context.user_data.pop("_edit_indices", None)
+    return MENU
 
 
 async def bot_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -467,6 +495,17 @@ async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CONFIRM
 
 
+async def note_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photo = update.message.photo[-1]
+    context.user_data["הערות"] = f"[תמונה: {photo.file_id}]"
+    summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items() if not k.startswith("_"))
+    await update.message.reply_text(
+        f"📷 תמונה התקבלה.\n\nסיכום:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
+        reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
+    )
+    return CONFIRM
+
+
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         try:
@@ -537,9 +576,13 @@ def start_telegram_bot():
             AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, amount)],
             TOOL:     [MessageHandler(filters.TEXT & ~filters.COMMAND, tool)],
             OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
-            NOTE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, note)],
+            NOTE:     [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, note),
+                MessageHandler(filters.PHOTO, note_photo),
+            ],
             CONFIRM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
             SEARCH:   [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
+            EDIT_SELECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_edit_select)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -593,6 +636,21 @@ def start_telegram_bot():
                         for chat_id in subs:
                             try:
                                 await telegram_app.bot.send_message(chat_id=chat_id, text=weekly_msg)
+                            except Exception:
+                                pass
+                # Client reminders — clients with no entry in 14 days
+                if not df.empty:
+                    threshold = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
+                    last_per_client = df.groupby("שם לקוח")["תאריך"].max()
+                    inactive = last_per_client[last_per_client < threshold]
+                    if not inactive.empty:
+                        lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים האחרונים:\n"]
+                        for client_name, last_dt in inactive.items():
+                            lines.append(f"• {client_name} (אחרון: {last_dt})")
+                        reminder_msg = "\n".join(lines)
+                        for chat_id in subs:
+                            try:
+                                await telegram_app.bot.send_message(chat_id=chat_id, text=reminder_msg)
                             except Exception:
                                 pass
             except Exception as e:
@@ -770,6 +828,7 @@ def index():
         full_df       = load_data_from_gsheet()
         task_counts   = full_df["עבודה"].value_counts().to_dict()
         client_counts = full_df["שם לקוח"].value_counts().head(6).to_dict()
+        auto          = _autocomplete_lists(full_df)
 
         return render_template(
             "index.html",
@@ -788,6 +847,8 @@ def index():
             client_counts=client_counts,
             page=page,
             total_pages=total_pages,
+            today=date.today().strftime("%Y-%m-%d"),
+            **auto,
         )
     except Exception as e:
         return render_template(
@@ -1014,6 +1075,12 @@ def export_csv():
 
 
 # ── REST API ───────────────────────────────────────────────────────────────────
+
+@app.route("/api/docs")
+@login_required
+def api_docs():
+    return render_template("api_docs.html")
+
 
 @app.route("/api/entries")
 @login_required

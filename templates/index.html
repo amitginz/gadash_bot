@@ -324,6 +324,16 @@
     </form>
   </div>
 
+  <!-- Global search (client-side, all columns) -->
+  <div class="filter-card mt-3 py-2 px-3">
+    <div class="d-flex align-items-center gap-2">
+      <i class="bi bi-search text-muted"></i>
+      <input type="text" id="globalSearch" class="form-control form-control-sm"
+             placeholder="חיפוש מהיר בכל השדות…" autocomplete="off" style="max-width:340px;">
+      <span id="globalSearchCount" class="text-muted small" style="white-space:nowrap;"></span>
+    </div>
+  </div>
+
   <!-- Action bar -->
   <div class="action-bar mt-3">
     <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -369,8 +379,11 @@
               style="display:none;" onclick="return confirm('למחוק את הרשומות שנבחרו?')">
         <i class="bi bi-trash"></i> מחק נבחרים (<span id="selectedCount">0</span>)
       </button>
-      <a href="/add" class="btn btn-success btn-sm px-3">
-        <i class="bi bi-plus-lg"></i> הוסף עבודה
+      <button class="btn btn-success btn-sm px-3" data-bs-toggle="modal" data-bs-target="#quickAddModal">
+        <i class="bi bi-plus-lg"></i> הוסף מהיר
+      </button>
+      <a href="/add" class="btn btn-outline-success btn-sm px-3">
+        <i class="bi bi-pencil-square"></i> טופס מלא
       </a>
     </div>
   </div>
@@ -501,6 +514,81 @@
   {% endif %}
 
 </div><!-- /container -->
+
+<!-- Quick-Add modal -->
+<div class="modal fade" id="quickAddModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow-lg">
+      <div class="modal-header pb-1">
+        <h6 class="modal-title fw-bold">➕ הוספה מהירה</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="/add" id="quickAddForm">
+        <div class="modal-body">
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">שם לקוח *</label>
+              <input type="text" name="שם לקוח" class="form-control form-control-sm" required
+                     list="qaClientList" autocomplete="off" placeholder="שם לקוח">
+              <datalist id="qaClientList">
+                {% for c in client_list %}<option value="{{ c }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">תאריך *</label>
+              <input type="date" name="תאריך" class="form-control form-control-sm" required value="{{ today }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">עבודה *</label>
+              <select name="עבודה" class="form-select form-select-sm" required>
+                <option value="">בחר…</option>
+                {% for t in ['חריש','ריסוס','קציר','דיסוק','אחר'] %}
+                <option>{{ t }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">שם חלקה</label>
+              <input type="text" name="שם חלקה" class="form-control form-control-sm"
+                     list="qaFieldList" autocomplete="off" placeholder="חלקה">
+              <datalist id="qaFieldList">
+                {% for f in field_list %}<option value="{{ f }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">כמות</label>
+              <input type="text" name="כמות" class="form-control form-control-sm" placeholder="30 דונם">
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">כלי</label>
+              <input type="text" name="כלי" class="form-control form-control-sm"
+                     list="qaToolList" autocomplete="off" placeholder="טרקטור">
+              <datalist id="qaToolList">
+                {% for t in tool_list %}<option value="{{ t }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">מפעיל</label>
+              <input type="text" name="מפעיל" class="form-control form-control-sm"
+                     list="qaOperatorList" autocomplete="off" placeholder="שם מפעיל">
+              <datalist id="qaOperatorList">
+                {% for o in operator_list %}<option value="{{ o }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">הערות</label>
+              <input type="text" name="הערות" class="form-control form-control-sm" placeholder="הערות">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer pt-1">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">ביטול</button>
+          <button type="submit" class="btn btn-sm btn-success px-4">שמור</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 
 <!-- Delete modal -->
 <div class="modal fade" id="deleteModal" tabindex="-1">
@@ -704,6 +792,35 @@
         if (e.key === 'Escape') { td.textContent = orig; }
       });
     });
+  });
+
+  // Global search — filters all visible rows across every column
+  const globalSearch = document.getElementById('globalSearch');
+  const globalCount  = document.getElementById('globalSearchCount');
+  if (globalSearch && table) {
+    globalSearch.addEventListener('input', () => {
+      const q = globalSearch.value.trim().toLowerCase();
+      let visible = 0;
+      table.querySelectorAll('tbody tr').forEach(tr => {
+        const text = tr.innerText.toLowerCase();
+        const show = !q || text.includes(q);
+        tr.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      globalCount.textContent = q ? `${visible} תוצאות` : '';
+    });
+    globalSearch.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { globalSearch.value = ''; globalSearch.dispatchEvent(new Event('input')); }
+    });
+  }
+
+  // CSRF inject into quick-add form too
+  document.querySelectorAll('form').forEach(form => {
+    if (!form.querySelector('[name="csrf_token"]')) {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = CSRF;
+      form.appendChild(inp);
+    }
   });
 </script>
 </body>

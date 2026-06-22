@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>תיעוד API — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
+    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display:flex; align-items:center; justify-content:space-between; }
+    .top-nav .brand { color:#fff; font-weight:700; font-size:1.1rem; text-decoration:none; }
+    .top-nav a { color:rgba(255,255,255,.75); text-decoration:none; font-size:.85rem; margin-inline-start:1.2rem; }
+    .top-nav a:hover { color:#fff; }
+    .hero { background: linear-gradient(135deg,#1a2f4e 0%,#2a4a72 60%,#3a6fa8 100%); color:#fff; padding:1.8rem 1.5rem; }
+    .hero h1 { font-size:1.4rem; font-weight:700; margin:0; }
+    .card-section { background:#fff; border-radius:14px; box-shadow:0 1px 5px rgba(0,0,0,.06); padding:1.5rem; margin-bottom:1.5rem; }
+    .method { font-size:.75rem; font-weight:700; padding:.2rem .55rem; border-radius:6px; display:inline-block; }
+    .method-get   { background:#dcfce7; color:#166534; }
+    .method-patch { background:#dbeafe; color:#1e40af; }
+    .endpoint { font-family: monospace; font-size:.95rem; color:#1a2f4e; background:#f0f5ff; padding:.15rem .5rem; border-radius:5px; }
+    pre { background:#1e293b; color:#e2e8f0; border-radius:10px; padding:1rem; font-size:.82rem; overflow-x:auto; }
+    .param-table th { background:#1a2f4e; color:#fff; font-size:.82rem; }
+    .param-table td { font-size:.83rem; vertical-align:top; }
+    code { background:#f1f5f9; color:#e11d48; border-radius:4px; padding:.05rem .3rem; }
+  </style>
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
+  <div>
+    <a href="/"><i class="bi bi-house"></i> ראשי</a>
+    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="container-lg">
+    <h1>📡 תיעוד REST API</h1>
+    <p class="mt-1 mb-0" style="opacity:.8;font-size:.9rem;">
+      כל הנתיבים דורשים session פעיל (כניסה דרך /login).
+      בקשות POST/PATCH חייבות לכלול את ה-CSRF token בכותרת <code style="background:rgba(255,255,255,.15);color:#fff;">X-CSRFToken</code>.
+    </p>
+  </div>
+</div>
+
+<div class="container-lg py-4">
+
+  <!-- GET /api/entries -->
+  <div class="card-section">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <span class="method method-get">GET</span>
+      <span class="endpoint">/api/entries</span>
+    </div>
+    <p>מחזיר רשימת רשומות עבודה בפורמט JSON. תומך בכל פרמטרי הסינון של הדף הראשי.</p>
+
+    <h6 class="fw-bold mt-3">Query Parameters</h6>
+    <table class="table table-bordered param-table">
+      <thead><tr><th>פרמטר</th><th>סוג</th><th>תיאור</th><th>דוגמה</th></tr></thead>
+      <tbody>
+        <tr><td><code>client</code></td><td>string</td><td>סינון לפי שם לקוח (חיפוש חלקי)</td><td><code>?client=כרמל</code></td></tr>
+        <tr><td><code>date_from</code></td><td>YYYY-MM-DD</td><td>מתאריך</td><td><code>?date_from=2025-01-01</code></td></tr>
+        <tr><td><code>date_to</code></td><td>YYYY-MM-DD</td><td>עד תאריך</td><td><code>?date_to=2025-06-30</code></td></tr>
+        <tr><td><code>task</code></td><td>string</td><td>סוג עבודה (חריש/ריסוס/קציר/דיסוק/אחר)</td><td><code>?task=חריש</code></td></tr>
+      </tbody>
+    </table>
+
+    <h6 class="fw-bold mt-3">תגובה לדוגמה</h6>
+    <pre>[
+  {
+    "שם לקוח": "כרמל חקלאות",
+    "תאריך": "2025-06-15",
+    "עבודה": "חריש",
+    "שם חלקה": "חלקה ב",
+    "כמות": "30 דונם",
+    "כלי": "טרקטור",
+    "מפעיל": "יוסי כהן",
+    "הערות": "",
+    "מזין": "Web"
+  }
+]</pre>
+
+    <h6 class="fw-bold mt-3">דוגמת קריאה (JavaScript)</h6>
+    <pre>const res = await fetch('/api/entries?client=כרמל&date_from=2025-01-01');
+const data = await res.json();
+console.log(data.length, 'רשומות');</pre>
+  </div>
+
+  <!-- PATCH /api/entries/<id> -->
+  <div class="card-section">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <span class="method method-patch">PATCH</span>
+      <span class="endpoint">/api/entries/&lt;row_id&gt;</span>
+    </div>
+    <p>עדכון שדה בודד ברשומה קיימת. משמש לעריכה מוטבעת (double-click בטבלה).</p>
+
+    <h6 class="fw-bold mt-3">Request Headers</h6>
+    <table class="table table-bordered param-table">
+      <thead><tr><th>כותרת</th><th>ערך</th></tr></thead>
+      <tbody>
+        <tr><td><code>Content-Type</code></td><td><code>application/json</code></td></tr>
+        <tr><td><code>X-CSRFToken</code></td><td>ערך ה-CSRF מ-<code>&lt;meta name="csrf-token"&gt;</code></td></tr>
+      </tbody>
+    </table>
+
+    <h6 class="fw-bold mt-3">Request Body</h6>
+    <table class="table table-bordered param-table">
+      <thead><tr><th>שדה</th><th>סוג</th><th>תיאור</th></tr></thead>
+      <tbody>
+        <tr><td><code>field</code></td><td>string</td><td>שם העמודה לעדכון (אחד מ: שם לקוח, תאריך, עבודה, שם חלקה, כמות, כלי, מפעיל, הערות)</td></tr>
+        <tr><td><code>value</code></td><td>string</td><td>הערך החדש</td></tr>
+      </tbody>
+    </table>
+
+    <h6 class="fw-bold mt-3">גוף הבקשה (JSON)</h6>
+    <pre>{ "field": "כמות", "value": "45 דונם" }</pre>
+
+    <h6 class="fw-bold mt-3">תגובה מוצלחת</h6>
+    <pre>{ "ok": true, "row_id": 42, "field": "כמות", "value": "45 דונם" }</pre>
+
+    <h6 class="fw-bold mt-3">תגובות שגיאה</h6>
+    <table class="table table-bordered param-table">
+      <thead><tr><th>קוד</th><th>סיבה</th></tr></thead>
+      <tbody>
+        <tr><td>400</td><td>שדה לא תקין (מחוץ לרשימה המותרת)</td></tr>
+        <tr><td>403</td><td>CSRF token חסר או שגוי</td></tr>
+        <tr><td>404</td><td>row_id לא קיים</td></tr>
+      </tbody>
+    </table>
+
+    <h6 class="fw-bold mt-3">דוגמת קריאה (JavaScript)</h6>
+    <pre>const csrf = document.querySelector('meta[name="csrf-token"]').content;
+const res  = await fetch('/api/entries/42', {
+  method: 'PATCH',
+  headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+  body: JSON.stringify({ field: 'כמות', value: '45 דונם' })
+});
+const data = await res.json();
+if (data.ok) console.log('עודכן!');</pre>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

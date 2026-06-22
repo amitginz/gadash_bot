@@ -49,6 +49,28 @@
   </div>
   {% else %}
 
+  <!-- Charts row -->
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-5">
+      <div class="card-section" style="height:280px;">
+        <p class="fw-bold mb-2" style="font-size:.85rem;color:#64748b;">עבודות לפי סוג</p>
+        <canvas id="taskPieChart"></canvas>
+      </div>
+    </div>
+    <div class="col-12 col-md-7">
+      <div class="card-section" style="height:280px;">
+        <p class="fw-bold mb-2" style="font-size:.85rem;color:#64748b;">עבודות לפי חודש</p>
+        <canvas id="monthBarChart"></canvas>
+      </div>
+    </div>
+    <div class="col-12">
+      <div class="card-section" style="height:260px;">
+        <p class="fw-bold mb-2" style="font-size:.85rem;color:#64748b;">לקוחות מובילים</p>
+        <canvas id="clientBarChart"></canvas>
+      </div>
+    </div>
+  </div>
+
   <!-- Monthly breakdown -->
   <div class="card-section mb-4">
     <h5 class="fw-bold mb-3">עבודות לפי חודש וסוג</h5>
@@ -111,8 +133,64 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-  // expose enumerate to Jinja — done server-side via loop.index0
+  const TASK_COLORS = {
+    'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'
+  };
+  const monthlyData  = {{ monthly | tojson }};
+  const taskTypes    = {{ task_types | tojson }};
+  const clientTotals = {{ client_totals | tojson }};
+
+  // Task pie
+  const taskTotals = {};
+  taskTypes.forEach(t => {
+    taskTotals[t] = monthlyData.reduce((s, r) => s + (Number(r[t]) || 0), 0);
+  });
+  new Chart(document.getElementById('taskPieChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(taskTotals),
+      datasets: [{ data: Object.values(taskTotals),
+        backgroundColor: Object.keys(taskTotals).map(t => TASK_COLORS[t] || '#64748b'),
+        borderWidth: 2 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'right', labels:{ font:{size:12}, boxWidth:14 } } } }
+  });
+
+  // Monthly bar (chronological order)
+  const monthsAsc  = [...monthlyData].reverse();
+  const mLabels    = monthsAsc.map(r => r['חודש']);
+  const mTotals    = monthsAsc.map(r => Number(r['סה"כ']) || 0);
+  new Chart(document.getElementById('monthBarChart'), {
+    type: 'bar',
+    data: {
+      labels: mLabels,
+      datasets: [{ label:'עבודות', data: mTotals,
+        backgroundColor:'#3578c8cc', borderColor:'#1a2f4e',
+        borderWidth:1, borderRadius:5 }]
+    },
+    options: { responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{ x:{ticks:{font:{size:11}}}, y:{ticks:{stepSize:1}, grid:{color:'#e2e8f0'}} } }
+  });
+
+  // Client horizontal bar
+  const cNames  = clientTotals.map(r => r['שם לקוח']);
+  const cCounts = clientTotals.map(r => Number(r['סה"כ']) || 0);
+  new Chart(document.getElementById('clientBarChart'), {
+    type: 'bar',
+    data: {
+      labels: cNames,
+      datasets: [{ data: cCounts, backgroundColor:'#1e8c4ecc',
+        borderColor:'#166534', borderWidth:1, borderRadius:5 }]
+    },
+    options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{ x:{ticks:{stepSize:1}, grid:{color:'#e2e8f0'}},
+               y:{ticks:{font:{size:11}}} } }
+  });
 </script>
 </body>
 </html>
