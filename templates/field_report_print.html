@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <title>דוח שעות לפי חלקה — גד"ש</title>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { margin: 0; }
+      @page { margin: 1.5cm; size: A4 landscape; }
+    }
+    body { font-family: 'Segoe UI', 'Arial Hebrew', Arial, sans-serif; font-size: 13px; color: #1e293b; background: #fff; direction: rtl; }
+    .print-header { border-bottom: 3px solid #1a2f4e; padding-bottom: 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: flex-end; }
+    .print-header h1 { font-size: 1.4rem; font-weight: 700; margin: 0; color: #1a2f4e; }
+    .print-header .meta { font-size: .78rem; color: #64748b; text-align: left; }
+    .section-title { font-size: 1rem; font-weight: 700; color: #1a2f4e; border-right: 4px solid #3578c8; padding-right: .5rem; margin: 1.5rem 0 .6rem; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: .82rem; }
+    th { background: #1a2f4e; color: #fff; padding: .45rem .6rem; text-align: center; border: 1px solid #2a4a72; }
+    th:first-child { text-align: right; }
+    td { padding: .4rem .6rem; border: 1px solid #e2e8f0; text-align: center; }
+    td:first-child { text-align: right; font-weight: 600; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    .total-col { background: #e8f0fb !important; font-weight: 700; color: #1a2f4e; }
+    .hours-badge { font-weight: 700; color: #92400e; }
+    .summary-row { display: flex; gap: 2rem; background: #f0f5ff; border-radius: 8px; padding: .8rem 1rem; margin-bottom: 1.5rem; }
+    .summary-item { text-align: center; }
+    .summary-item .val { font-size: 1.4rem; font-weight: 700; color: #1a2f4e; }
+    .summary-item .lbl { font-size: .75rem; color: #64748b; }
+    .two-col { display: flex; gap: 2rem; }
+    .two-col > * { flex: 1; }
+    .btn-print { background: #1a2f4e; color: #fff; border: none; padding: .5rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: .9rem; margin-left: .5rem; }
+    .btn-back  { background: #e2e8f0; color: #1a2f4e; border: none; padding: .5rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: .9rem; text-decoration: none; display: inline-block; }
+  </style>
+</head>
+<body>
+
+<div class="no-print" style="padding:.8rem 1.5rem; background:#f0f5ff; border-bottom:1px solid #dbeafe; display:flex; gap:.5rem;">
+  <a class="btn-back" href="/field-report{% if client_filter or date_from or date_to %}?client={{ client_filter }}&date_from={{ date_from }}&date_to={{ date_to }}{% endif %}">← חזור</a>
+  <button class="btn-print" onclick="window.print()">🖨️ הדפס / שמור PDF</button>
+</div>
+
+<div style="padding: 1.5rem 2rem;">
+
+<div class="print-header">
+  <div>
+    <h1>🌾 גד"ש — דוח שעות לפי חלקה וגידול</h1>
+    {% if client_filter %}<div style="font-size:.85rem;color:#475569;margin-top:.3rem;">לקוח: <strong>{{ client_filter }}</strong></div>{% endif %}
+    {% if date_from or date_to %}
+    <div style="font-size:.85rem;color:#475569;margin-top:.2rem;">
+      תקופה: {{ date_from or '—' }} עד {{ date_to or '—' }}
+    </div>
+    {% endif %}
+  </div>
+  <div class="meta">
+    <div>הופק: {{ generated }}</div>
+  </div>
+</div>
+
+<div class="summary-row">
+  <div class="summary-item">
+    <div class="val">{{ "%.1f"|format(total_hours) }}</div>
+    <div class="lbl">סה"כ שעות</div>
+  </div>
+  <div class="summary-item">
+    <div class="val">{{ field_totals|length }}</div>
+    <div class="lbl">חלקות</div>
+  </div>
+  <div class="summary-item">
+    <div class="val">{{ crop_totals|length }}</div>
+    <div class="lbl">גידולים</div>
+  </div>
+</div>
+
+<div class="section-title">טבלת שעות — חלקה × גידול</div>
+<table>
+  <thead>
+    <tr>
+      <th>שם חלקה</th>
+      {% for c in crops %}<th>{{ c }}</th>{% endfor %}
+      <th class="total-col">סה"כ שעות</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in crop_pivot %}
+    <tr>
+      <td>{{ row['שם חלקה'] }}</td>
+      {% for c in crops %}
+      <td>{% set v = row.get(c, 0)|float %}{% if v > 0 %}<span class="hours-badge">{{ "%.1f"|format(v) }}</span>{% else %}—{% endif %}</td>
+      {% endfor %}
+      <td class="total-col hours-badge">{{ "%.1f"|format(row.get('סה"כ', 0)|float) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="two-col">
+  <div>
+    <div class="section-title">סה"כ לפי חלקה</div>
+    <table>
+      <thead><tr><th>שם חלקה</th><th>עבודות</th><th>שעות</th></tr></thead>
+      <tbody>
+        {% for row in field_totals %}
+        <tr>
+          <td>{{ row['שם חלקה'] }}</td>
+          <td>{{ row['עבודות'] }}</td>
+          <td class="hours-badge">{{ "%.1f"|format(row['שעות']|float) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <div class="section-title">סה"כ לפי גידול</div>
+    <table>
+      <thead><tr><th>גידול</th><th>עבודות</th><th>שעות</th></tr></thead>
+      <tbody>
+        {% for row in crop_totals %}
+        <tr>
+          <td>{{ row['גידול'] }}</td>
+          <td>{{ row['עבודות'] }}</td>
+          <td class="hours-badge">{{ "%.1f"|format(row['שעות']|float) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

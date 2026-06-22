@@ -75,16 +75,29 @@
           <input type="date" class="form-control" name="תאריך" required value="{{ prefill.get('תאריך', today) }}" />
         </div>
         <div class="col-sm-6">
-          <label class="form-label">כמות</label>
-          <input type="text" class="form-control" name="כמות" placeholder="לדוג׳ 30 דונם" value="{{ prefill.get('כמות', '') }}" />
-        </div>
-        <div class="col-sm-6">
           <label class="form-label">שם חלקה</label>
           <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳"
                  value="{{ prefill.get('שם חלקה', '') }}" list="fieldList" autocomplete="off" />
           <datalist id="fieldList">
             {% for f in field_list %}<option value="{{ f }}">{% endfor %}
           </datalist>
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">גידול</label>
+          <input type="text" class="form-control" name="גידול" placeholder="לדוג׳ חיטה, תירס"
+                 value="{{ prefill.get('גידול', '') }}" list="cropList" autocomplete="off" />
+          <datalist id="cropList">
+            {% for c in crop_list %}<option value="{{ c }}">{% endfor %}
+          </datalist>
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">כמות</label>
+          <input type="text" class="form-control" name="כמות" placeholder="לדוג׳ 30 דונם" value="{{ prefill.get('כמות', '') }}" />
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">שעות עבודה</label>
+          <input type="number" class="form-control" name="שעות" placeholder="לדוג׳ 3.5" step="0.5" min="0"
+                 value="{{ prefill.get('שעות', '') }}" />
         </div>
         <div class="col-sm-6">
           <label class="form-label">מפעיל</label>

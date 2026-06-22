@@ -21,7 +21,7 @@ PAGE_SIZE        = 50
 SUBSCRIBERS_FILE = "subscribers.json"
 AUDIT_LOG_FILE   = "audit.log"
 
-MENU, CLIENT, DATE, TASK, FIELD, AMOUNT, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT = range(12)
+MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT = range(14)
 
 TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
@@ -33,7 +33,7 @@ MENU_KEYBOARD   = [
     ["סיים"],
 ]
 
-COLUMNS     = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "כמות", "כלי", "מפעיל", "הערות", "מזין"]
+COLUMNS     = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול", "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין"]
 VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
 
 
@@ -43,7 +43,9 @@ class WorkEntry:
     date:       str
     task:       str
     field_name: str = ""
+    crop:       str = ""
     amount:     str = ""
+    hours:      str = ""
     tool:       str = ""
     operator:   str = ""
     notes:      str = ""
@@ -63,7 +65,8 @@ class WorkEntry:
     def to_sheet_row(self) -> list:
         return [
             self.client, self.date, self.task, self.field_name,
-            self.amount, self.tool, self.operator, self.notes, self.entered_by,
+            self.crop, self.amount, self.hours,
+            self.tool, self.operator, self.notes, self.entered_by,
         ]
 
     def to_dict(self) -> dict:
@@ -76,7 +79,9 @@ class WorkEntry:
             date=str(d.get("תאריך", "")),
             task=str(d.get("עבודה", "")),
             field_name=str(d.get("שם חלקה", "")),
+            crop=str(d.get("גידול", "")),
             amount=str(d.get("כמות", "")),
+            hours=str(d.get("שעות", "")),
             tool=str(d.get("כלי", "")),
             operator=str(d.get("מפעיל", "")),
             notes=str(d.get("הערות", "")),
@@ -90,7 +95,9 @@ class WorkEntry:
             date=form.get("תאריך", ""),
             task=form.get("עבודה", ""),
             field_name=form.get("שם חלקה", ""),
+            crop=form.get("גידול", ""),
             amount=form.get("כמות", ""),
+            hours=form.get("שעות", ""),
             tool=form.get("כלי", ""),
             operator=form.get("מפעיל", ""),
             notes=form.get("הערות", ""),
@@ -104,7 +111,9 @@ class WorkEntry:
             date=user_data.get("תאריך", ""),
             task=user_data.get("עבודה", ""),
             field_name=user_data.get("שם חלקה", ""),
+            crop=user_data.get("גידול", ""),
             amount=user_data.get("כמות", ""),
+            hours=user_data.get("שעות", ""),
             tool=user_data.get("כלי", ""),
             operator=user_data.get("מפעיל", ""),
             notes=user_data.get("הערות", ""),
@@ -459,13 +468,33 @@ async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["שם חלקה"] = update.message.text.strip()
-    await update.message.reply_text("כמות (למשל 30 דונם):")
+    await update.message.reply_text(
+        "מה הגידול בחלקה? (לדוגמה: חיטה, תירס, כותנה — או 'דלג')",
+        reply_markup=ReplyKeyboardMarkup([["דלג"]], one_time_keyboard=True, resize_keyboard=True),
+    )
+    return CROP
+
+
+async def crop_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["גידול"] = "" if text == "דלג" else text
+    await update.message.reply_text("כמות (למשל 30 דונם):", reply_markup=ReplyKeyboardRemove())
     return AMOUNT
 
 
 async def amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["כמות"] = update.message.text.strip()
-    await update.message.reply_text("איזה כלי שימש?")
+    await update.message.reply_text(
+        "כמה שעות עבודה? (ספרה או 'דלג')",
+        reply_markup=ReplyKeyboardMarkup([["דלג"]], one_time_keyboard=True, resize_keyboard=True),
+    )
+    return HOURS
+
+
+async def hours_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    context.user_data["שעות"] = "" if text == "דלג" else text
+    await update.message.reply_text("איזה כלי שימש?", reply_markup=ReplyKeyboardRemove())
     return TOOL
 
 
@@ -573,7 +602,9 @@ def start_telegram_bot():
             DATE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, date_input)],
             TASK:     [MessageHandler(filters.TEXT & ~filters.COMMAND, task)],
             FIELD:    [MessageHandler(filters.TEXT & ~filters.COMMAND, field)],
+            CROP:     [MessageHandler(filters.TEXT & ~filters.COMMAND, crop_step)],
             AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, amount)],
+            HOURS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, hours_step)],
             TOOL:     [MessageHandler(filters.TEXT & ~filters.COMMAND, tool)],
             OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
             NOTE:     [
@@ -592,69 +623,112 @@ def start_telegram_bot():
     )
     telegram_app.add_handler(conv)
 
-    async def _scheduled_reports():
-        while True:
-            now = datetime.now()
-            next_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
-            if now >= next_8am:
-                next_8am += timedelta(days=1)
-            await asyncio.sleep((next_8am - now).total_seconds())
+    async def _broadcast(subs, text):
+        for chat_id in subs:
             try:
-                df = load_data_from_gsheet()
-                subs = _get_subscribers()
-                if not subs:
-                    continue
+                await telegram_app.bot.send_message(chat_id=chat_id, text=text)
+            except Exception:
+                pass
 
-                # Daily summary
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                y_df = df[df["תאריך"] == yesterday]
-                if not y_df.empty:
-                    lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות:\n"]
-                    for _, row in y_df.iterrows():
-                        lines.append(
-                            f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
-                            f"{row.get('שם חלקה','')} | {row.get('כמות','')}"
+    async def _scheduled_reports():
+        sent = set()  # (date_str, event_name)
+        while True:
+            await asyncio.sleep(1800)  # check every 30 minutes
+            now  = datetime.now()
+            date_str = now.strftime("%Y-%m-%d")
+            hour = now.hour
+
+            # ── Morning reports at 08:00 ──────────────────────────────────────
+            if hour == 8 and (date_str, "morning") not in sent:
+                sent.add((date_str, "morning"))
+                sent = {k for k in sent if k[0] == date_str}
+                try:
+                    df   = load_data_from_gsheet()
+                    subs = _get_subscribers()
+                    if not subs:
+                        continue
+
+                    # Daily summary
+                    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+                    y_df = df[df["תאריך"] == yesterday]
+                    if not y_df.empty:
+                        y_df = y_df.copy()
+                        y_df["_שעות"] = pd.to_numeric(y_df["שעות"], errors="coerce").fillna(0)
+                        total_h = y_df["_שעות"].sum()
+                        lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות"]
+                        if total_h > 0:
+                            lines[0] += f" | {total_h:.1f} שעות"
+                        lines.append("")
+                        for _, row in y_df.iterrows():
+                            h = f" | {float(row['_שעות']):.1f}ש׳" if float(row['_שעות']) > 0 else ""
+                            lines.append(
+                                f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
+                                f"{row.get('שם חלקה','')} | {row.get('גידול','')}{h}"
+                            )
+                        await _broadcast(subs, "\n".join(lines))
+
+                    # Weekly summary every Monday
+                    if now.weekday() == 0:
+                        week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+                        w_df = df[df["תאריך"] >= week_start].copy()
+                        if not w_df.empty:
+                            w_df["_שעות"] = pd.to_numeric(w_df["שעות"], errors="coerce").fillna(0)
+                            total_h = w_df["_שעות"].sum()
+                            top_clients = w_df["שם לקוח"].value_counts().head(3)
+                            lines = [f"📊 סיכום שבועי — {len(w_df)} עבודות | {total_h:.1f} שעות\n"]
+                            lines.append("👤 לקוחות מובילים:")
+                            for client, cnt in top_clients.items():
+                                lines.append(f"  • {client}: {cnt}")
+                            # Hours by field
+                            field_h = (
+                                w_df[w_df["_שעות"] > 0]
+                                .groupby("שם חלקה")["_שעות"].sum()
+                                .sort_values(ascending=False).head(5)
+                            )
+                            if not field_h.empty:
+                                lines.append("\n📍 שעות לפי חלקה:")
+                                for fn, h in field_h.items():
+                                    lines.append(f"  • {fn or 'לא צוין'}: {h:.1f}ש׳")
+                            # Hours by crop
+                            crop_h = (
+                                w_df[w_df["_שעות"] > 0]
+                                .groupby("גידול")["_שעות"].sum()
+                                .sort_values(ascending=False).head(5)
+                            )
+                            if not crop_h.empty:
+                                lines.append("\n🌾 שעות לפי גידול:")
+                                for cn, h in crop_h.items():
+                                    lines.append(f"  • {cn or 'לא צוין'}: {h:.1f}ש׳")
+                            await _broadcast(subs, "\n".join(lines))
+
+                    # Inactive client reminders — no entry in 14 days
+                    if not df.empty:
+                        threshold = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+                        last_per_client = df.groupby("שם לקוח")["תאריך"].max()
+                        inactive = last_per_client[last_per_client < threshold]
+                        if not inactive.empty:
+                            lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים:\n"]
+                            for client_name, last_dt in inactive.items():
+                                lines.append(f"• {client_name} (אחרון: {last_dt})")
+                            await _broadcast(subs, "\n".join(lines))
+                except Exception as e:
+                    print(f"[BOT] Morning report error: {e}")
+
+            # ── Evening worker reminder at 18:00 ─────────────────────────────
+            if hour == 18 and (date_str, "evening") not in sent:
+                sent.add((date_str, "evening"))
+                try:
+                    subs = _get_subscribers()
+                    if subs:
+                        msg = (
+                            f"📋 תזכורת סוף יום — {date_str}\n\n"
+                            "אל תשכח לדווח על שעות העבודה שלך היום!\n"
+                            f"🔗 {WEB_APP_URL}/worker\n\n"
+                            "לדיווח דרך הבוט — שלח 'הזן עבודה חדשה'"
                         )
-                    daily_msg = "\n".join(lines)
-                    for chat_id in subs:
-                        try:
-                            await telegram_app.bot.send_message(chat_id=chat_id, text=daily_msg)
-                        except Exception:
-                            pass
-
-                # Weekly summary every Monday
-                if datetime.now().weekday() == 0:
-                    week_start = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-                    week_df = df[df["תאריך"] >= week_start]
-                    if not week_df.empty:
-                        top_clients = week_df["שם לקוח"].value_counts().head(3)
-                        lines = [f"📊 סיכום שבועי (7 ימים אחרונים) — {len(week_df)} עבודות:\n"]
-                        lines.append("לקוחות מובילים:")
-                        for client, cnt in top_clients.items():
-                            lines.append(f"  • {client}: {cnt}")
-                        weekly_msg = "\n".join(lines)
-                        for chat_id in subs:
-                            try:
-                                await telegram_app.bot.send_message(chat_id=chat_id, text=weekly_msg)
-                            except Exception:
-                                pass
-                # Client reminders — clients with no entry in 14 days
-                if not df.empty:
-                    threshold = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d")
-                    last_per_client = df.groupby("שם לקוח")["תאריך"].max()
-                    inactive = last_per_client[last_per_client < threshold]
-                    if not inactive.empty:
-                        lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים האחרונים:\n"]
-                        for client_name, last_dt in inactive.items():
-                            lines.append(f"• {client_name} (אחרון: {last_dt})")
-                        reminder_msg = "\n".join(lines)
-                        for chat_id in subs:
-                            try:
-                                await telegram_app.bot.send_message(chat_id=chat_id, text=reminder_msg)
-                            except Exception:
-                                pass
-            except Exception as e:
-                print(f"[BOT] Scheduled report error: {e}")
+                        await _broadcast(subs, msg)
+                except Exception as e:
+                    print(f"[BOT] Evening reminder error: {e}")
 
     async def _run():
         asyncio.create_task(_scheduled_reports())
@@ -824,6 +898,7 @@ def _autocomplete_lists(df: pd.DataFrame) -> dict:
     return {
         "client_list":   sorted(df["שם לקוח"].dropna().unique().tolist()),
         "field_list":    sorted(df["שם חלקה"].dropna().unique().tolist()),
+        "crop_list":     sorted(df["גידול"].dropna().replace("", pd.NA).dropna().unique().tolist()),
         "operator_list": sorted(df["מפעיל"].dropna().unique().tolist()),
         "tool_list":     sorted(df["כלי"].dropna().unique().tolist()),
     }
@@ -1184,6 +1259,200 @@ def worker_index():
     return render_template("worker_index.html",
                            worker_name=worker_name, today=today,
                            recent=recent, my_count=my_count, **lists)
+
+
+@app.route("/client-report")
+@login_required
+def client_report():
+    client_name  = request.args.get("client", "").strip()
+    date_from    = request.args.get("date_from", "").strip()
+    date_to      = request.args.get("date_to", "").strip()
+    try:
+        df = load_data_from_gsheet()
+        auto = _autocomplete_lists(df)
+        if not client_name:
+            return render_template("client_report.html", client_name="", records=[],
+                                   total_hours=0, total_entries=0, date_range="",
+                                   field_hours=[], crop_hours=[], task_counts=[],
+                                   monthly_hours=[], date_from=date_from, date_to=date_to,
+                                   **auto)
+        cdf = df[df["שם לקוח"].str.contains(client_name, case=False, na=False)].copy()
+        if date_from:
+            cdf = cdf[cdf["תאריך"] >= date_from]
+        if date_to:
+            cdf = cdf[cdf["תאריך"] <= date_to]
+        cdf["_שעות"] = pd.to_numeric(cdf["שעות"], errors="coerce").fillna(0)
+        total_hours   = float(cdf["_שעות"].sum())
+        total_entries = len(cdf)
+        date_range    = f"{cdf['תאריך'].min()} — {cdf['תאריך'].max()}" if total_entries else "—"
+
+        field_hours = (
+            cdf.groupby("שם חלקה")["_שעות"].sum()
+            .reset_index().rename(columns={"שם חלקה": "label", "_שעות": "hours"})
+            .sort_values("hours", ascending=False).to_dict(orient="records")
+        )
+        crop_hours = (
+            cdf.groupby("גידול")["_שעות"].sum()
+            .reset_index().rename(columns={"גידול": "label", "_שעות": "hours"})
+            .sort_values("hours", ascending=False).to_dict(orient="records")
+        )
+        task_counts = (
+            cdf["עבודה"].value_counts()
+            .reset_index().rename(columns={"עבודה": "label", "count": "cnt"})
+            .to_dict(orient="records")
+        )
+        cdf["_month"] = pd.to_datetime(cdf["תאריך"], errors="coerce").dt.strftime("%Y-%m")
+        monthly_hours = (
+            cdf.groupby("_month").agg(entries=("שם לקוח", "count"), hours=("_שעות", "sum"))
+            .reset_index().rename(columns={"_month": "month"})
+            .sort_values("month").to_dict(orient="records")
+        )
+        records = cdf.sort_values("תאריך", ascending=False).to_dict(orient="records")
+        return render_template("client_report.html",
+                               client_name=client_name, records=records,
+                               total_hours=total_hours, total_entries=total_entries,
+                               date_range=date_range, field_hours=field_hours,
+                               crop_hours=crop_hours, task_counts=task_counts,
+                               monthly_hours=monthly_hours,
+                               date_from=date_from, date_to=date_to, **auto)
+    except Exception as e:
+        return render_template("client_report.html", client_name=client_name, records=[],
+                               total_hours=0, total_entries=0, date_range="",
+                               field_hours=[], crop_hours=[], task_counts=[],
+                               monthly_hours=[], date_from=date_from, date_to=date_to,
+                               client_list=[], field_list=[], crop_list=[],
+                               operator_list=[], tool_list=[], error=str(e))
+
+
+@app.route("/field-report")
+@login_required
+def field_report():
+    try:
+        df = load_data_from_gsheet()
+        if df.empty:
+            return render_template("field_report.html",
+                                   rows=[], crop_pivot=[], crops=[], field_totals=[],
+                                   crop_totals=[], total_hours=0,
+                                   date_from="", date_to="", client_filter="",
+                                   client_list=[], field_list=[], crop_list=[])
+
+        client_filter = request.args.get("client", "").strip()
+        date_from     = request.args.get("date_from", "").strip()
+        date_to       = request.args.get("date_to", "").strip()
+
+        fdf = df.copy()
+        if client_filter:
+            fdf = fdf[fdf["שם לקוח"].str.contains(client_filter, case=False, na=False)]
+        if date_from:
+            fdf = fdf[fdf["תאריך"] >= date_from]
+        if date_to:
+            fdf = fdf[fdf["תאריך"] <= date_to]
+
+        fdf["_שעות"] = pd.to_numeric(fdf["שעות"], errors="coerce").fillna(0)
+        fdf["גידול_label"] = fdf["גידול"].fillna("").replace("", "לא צוין")
+        fdf["שם חלקה_label"] = fdf["שם חלקה"].fillna("").replace("", "לא צוין")
+
+        # Totals per field
+        field_totals = (
+            fdf.groupby("שם חלקה_label")
+            .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
+            .reset_index()
+            .rename(columns={"שם חלקה_label": "שם חלקה"})
+            .sort_values("שעות", ascending=False)
+            .to_dict(orient="records")
+        )
+
+        # Totals per crop
+        crop_totals = (
+            fdf.groupby("גידול_label")
+            .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
+            .reset_index()
+            .rename(columns={"גידול_label": "גידול"})
+            .sort_values("שעות", ascending=False)
+            .to_dict(orient="records")
+        )
+
+        # Pivot: field × crop → hours
+        pivot = fdf.pivot_table(
+            index="שם חלקה_label", columns="גידול_label",
+            values="_שעות", aggfunc="sum", fill_value=0
+        )
+        crops = list(pivot.columns)
+        pivot["סה\"כ"] = pivot.sum(axis=1)
+        pivot = pivot.reset_index().rename(columns={"שם חלקה_label": "שם חלקה"})
+        crop_pivot = pivot.to_dict(orient="records")
+
+        total_hours = float(fdf["_שעות"].sum())
+
+        auto = _autocomplete_lists(df)
+        return render_template(
+            "field_report.html",
+            crop_pivot=crop_pivot,
+            crops=crops,
+            field_totals=field_totals,
+            crop_totals=crop_totals,
+            total_hours=total_hours,
+            date_from=date_from,
+            date_to=date_to,
+            client_filter=client_filter,
+            **auto,
+        )
+    except Exception as e:
+        return render_template("field_report.html",
+                               rows=[], crop_pivot=[], crops=[], field_totals=[],
+                               crop_totals=[], total_hours=0,
+                               date_from="", date_to="", client_filter="",
+                               client_list=[], field_list=[], crop_list=[],
+                               error=str(e))
+
+
+@app.route("/field-report/print")
+@login_required
+def field_report_print():
+    try:
+        df = load_data_from_gsheet()
+        client_filter = request.args.get("client", "").strip()
+        date_from     = request.args.get("date_from", "").strip()
+        date_to       = request.args.get("date_to", "").strip()
+        fdf = df.copy()
+        if client_filter:
+            fdf = fdf[fdf["שם לקוח"].str.contains(client_filter, case=False, na=False)]
+        if date_from:
+            fdf = fdf[fdf["תאריך"] >= date_from]
+        if date_to:
+            fdf = fdf[fdf["תאריך"] <= date_to]
+        fdf["_שעות"] = pd.to_numeric(fdf["שעות"], errors="coerce").fillna(0)
+        fdf["גידול_label"] = fdf["גידול"].fillna("").replace("", "לא צוין")
+        fdf["שם חלקה_label"] = fdf["שם חלקה"].fillna("").replace("", "לא צוין")
+        field_totals = (
+            fdf.groupby("שם חלקה_label")
+            .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
+            .reset_index().rename(columns={"שם חלקה_label": "שם חלקה"})
+            .sort_values("שעות", ascending=False).to_dict(orient="records")
+        )
+        crop_totals = (
+            fdf.groupby("גידול_label")
+            .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
+            .reset_index().rename(columns={"גידול_label": "גידול"})
+            .sort_values("שעות", ascending=False).to_dict(orient="records")
+        )
+        pivot = fdf.pivot_table(
+            index="שם חלקה_label", columns="גידול_label",
+            values="_שעות", aggfunc="sum", fill_value=0
+        )
+        crops = list(pivot.columns)
+        pivot['סה"כ'] = pivot.sum(axis=1)
+        pivot = pivot.reset_index().rename(columns={"שם חלקה_label": "שם חלקה"})
+        crop_pivot = pivot.to_dict(orient="records")
+        total_hours = float(fdf["_שעות"].sum())
+        return render_template("field_report_print.html",
+                               crop_pivot=crop_pivot, crops=crops,
+                               field_totals=field_totals, crop_totals=crop_totals,
+                               total_hours=total_hours, date_from=date_from, date_to=date_to,
+                               client_filter=client_filter,
+                               generated=datetime.now().strftime("%d/%m/%Y %H:%M"))
+    except Exception as e:
+        return f"שגיאה: {e}"
 
 
 # ── Start bot thread ───────────────────────────────────────────────────────────
