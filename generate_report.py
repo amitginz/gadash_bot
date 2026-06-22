@@ -9,17 +9,26 @@ import os
 SCR_BASE = r"C:\Users\amit ginzberg\Pictures\Screenshots"
 SCR_DIR  = r"C:\Users\amit ginzberg\gadash_bot"
 
-# New screenshots taken from live site
-SCR_LOGIN       = SCR_DIR  + r"\scr_login.png"
-SCR_MAIN_FULL   = SCR_DIR  + r"\scr_main.png"
-SCR_MAIN_TABLE  = SCR_DIR  + r"\scr_main_table.png"
-SCR_ADD         = SCR_DIR  + r"\scr_add.png"
-SCR_SUMMARY     = SCR_DIR  + r"\scr_summary.png"
-SCR_AUDIT       = SCR_DIR  + r"\scr_audit.png"
-SCR_PRINT       = SCR_DIR  + r"\scr_print.png"
-SCR_IMPORT      = SCR_DIR  + r"\scr_import.png"
-SCR_EDIT        = SCR_BASE + r"\Screenshot 2026-06-21 171017.png"
-SCR_DELETE      = SCR_DIR  + r"\screen_delete.png"
+# Screenshots taken from live site
+SCR_LOGIN         = SCR_DIR  + r"\scr_login.png"
+SCR_MAIN_FULL     = SCR_DIR  + r"\scr_main.png"
+SCR_MAIN_TABLE    = SCR_DIR  + r"\scr_main_table.png"
+SCR_GLOBAL_SEARCH = SCR_DIR  + r"\scr_global_search.png"
+SCR_QUICK_ADD     = SCR_DIR  + r"\scr_quick_add.png"
+SCR_ADD           = SCR_DIR  + r"\scr_add.png"
+SCR_SUMMARY       = SCR_DIR  + r"\scr_summary.png"
+SCR_AUDIT         = SCR_DIR  + r"\scr_audit.png"
+SCR_PRINT         = SCR_DIR  + r"\scr_print.png"
+SCR_IMPORT        = SCR_DIR  + r"\scr_import.png"
+SCR_API_DOCS      = SCR_DIR  + r"\scr_api_docs.png"
+SCR_EDIT          = SCR_BASE + r"\Screenshot 2026-06-21 171017.png"
+SCR_DELETE        = SCR_DIR  + r"\screen_delete.png"
+SCR_LOGIN_WORKER  = SCR_DIR  + r"\scr_login_worker.png"
+SCR_WORKER_LOGIN  = SCR_DIR  + r"\scr_worker_login.png"
+SCR_WORKER_MAIN   = SCR_DIR  + r"\scr_worker_main.png"
+SCR_FIELD_REPORT  = SCR_DIR  + r"\scr_field_report.png"
+SCR_CLIENT_REPORT = SCR_DIR  + r"\scr_client_report.png"
+SCR_FIELD_PRINT   = SCR_DIR  + r"\scr_field_print.png"
 
 IMG_BASE = r"C:\Users\amit ginzberg\Documents\Amit_PC\Summaries\Computer_Science_Tel_Hai\Year_B\נושאים מתקדמים בפיתוח תוכנה\פרוייקט"
 IMG_USECASE  = IMG_BASE + r"\UseCasedDiagram.png"
@@ -163,17 +172,27 @@ make_rtl_table(doc,
     headers=['תחום', 'עמית גינזברג', 'הדר קלר'],
     rows=[
         ['ארכיטקטורת המערכת ו-WorkEntry Dataclass', '✓', ''],
-        ['בוט טלגרם — ConversationHandler, מצבי שיחה, /undo, סטטיסטיקות', '✓', ''],
+        ['בוט טלגרם — ConversationHandler, מצבי שיחה, /undo, תמונות, סטטיסטיקות', '✓', ''],
+        ['בוט — עריכת רשומה כלשהי, תזכורות לקוחות לא-פעילים', '✓', ''],
         ['שילוב Google Sheets (gspread, google-auth, cache)', '✓', ''],
-        ['Flask Web App — נתיבים, לוגיקה עסקית, REST API', '✓', ''],
+        ['Flask Web App — נתיבים, לוגיקה עסקית, REST API, /api/docs', '✓', ''],
         ['אבטחה — CSRF, rate limiting, session timeout, סיסמה', '✓', ''],
         ['לוג שינויים (audit trail), דוח חודשי, דוח שבועי אוטומטי', '✓', ''],
         ['ממשק משתמש Web — HTML, CSS, Bootstrap RTL', '', '✓'],
+        ['חיפוש גלובלי, הוספה מהירה (Quick-Add modal)', '', '✓'],
+        ['גרפים בדוח חודשי (Chart.js × 3)', '', '✓'],
         ['עריכה מוטבעת (inline edit), מחיקה מרובה, שכפול רשומה', '', '✓'],
         ['מסך נייד (mobile cards), הדפסה/PDF', '', '✓'],
         ['טפסי הוספה/עריכה עם השלמה אוטומטית (autocomplete)', '', '✓'],
         ['ייצוא/ייבוא Excel וCSV, ייבוא חכם (dedup)', '', '✓'],
+        ['פורטל עובד Web — /worker, WORKER_PASSWORD, היסטוריה אישית', '✓', ''],
+        ['שדות גידול ושעות עבודה — WorkEntry, בוט, פורטל עובד וטפסי Web', '✓', ''],
+        ['דוח שעות לפי חלקה/גידול (/field-report) — pivot + גרפים', '', '✓'],
+        ['דוח לקוח (/client-report) — שעות, גרפים × 4, כל הרשומות', '', '✓'],
+        ['הדפסת PDF של דוח חלקה (/field-report/print)', '', '✓'],
+        ['תזכורת עובדים סוף-יום ב-18:00 + סיכום שבועי מורחב עם שעות', '✓', ''],
         ['פריסה לענן (Fly.io, Dockerfile, fly.toml)', '✓', ''],
+        ['בדיקות אוטומטיות — pytest (27 בדיקות)', '✓', ''],
         ['תיעוד, README ו-UML', '✓', '✓'],
     ],
     col_widths=[9.5, 2.5, 2.5]
@@ -194,26 +213,43 @@ add_rtl_para(doc,
     size=11)
 
 add_heading_rtl(doc, 'הפתרון', 2)
-add_rtl_para(doc, 'המערכת מורכבת משני ממשקים המשלימים זה את זה:', bold=True, size=11)
+add_rtl_para(doc, 'המערכת מורכבת משלושה ממשקים המשלימים זה את זה:', bold=True, size=11)
 
 add_rtl_para(doc,
     'בוט טלגרם (ממשק ניידי לעובדי השדה): עובד השדה פותח את אפליקציית טלגרם ומתחיל שיחה עם '
     'הבוט. הבוט מנחה אותו בשפה העברית דרך שאלות פשוטות ומדורגות: שם לקוח, תאריך, סוג העבודה, '
-    'שם החלקה, כמות, כלי עבודה, שם המפעיל והערות. בסוף מוצג סיכום לאישור, ורק לאחר אישור '
-    'המשתמש הנתונים נשמרים. הבוט תומך גם בפקודות נוספות: /undo לביטול הרשומה האחרונה, '
-    'צפייה ב-5 עבודות אחרונות, חיפוש לפי לקוח, סטטיסטיקות, עריכת הרשומה האחרונה, '
-    'ודוחות שבועיים ויומיים אוטומטיים.',
+    'שם החלקה, גידול (עם אפשרות לדלג), כמות, שעות עבודה (עם אפשרות לדלג), כלי עבודה, שם המפעיל '
+    'והערות. בשלב ההערות ניתן לשלוח גם תמונה — הבוט שומר את מזהה התמונה (file_id) כהערה לרשומה. '
+    'בסוף מוצג סיכום לאישור, ורק לאחר אישור המשתמש הנתונים נשמרים. '
+    'הבוט תומך גם בפקודות נוספות: /undo לביטול הרשומה האחרונה, '
+    'בחירת רשומה מהאחרונות לצפייה וקישור עריכה, חיפוש לפי לקוח, סטטיסטיקות, '
+    'ודוחות אוטומטיים: יומי ב-8:00 (עם שעות כולל), שבועי בכל יום שני (עם שעות לפי חלקה וגידול), '
+    'תזכורת ללקוחות שלא עבדו ב-14 יום, ותזכורת לעובדים בסוף יום ב-18:00 עם קישור לפורטל.',
+    size=11)
+
+add_rtl_para(doc,
+    'פורטל עובד Web (ממשק הזנה לעובדים): עובד שאינו משתמש בטלגרם יכול לגשת לממשק Web פשוט '
+    'בכתובת /worker עם סיסמת עובד נפרדת (WORKER_PASSWORD). '
+    'הפורטל מציג שני לוחות: טופס הוספת עבודה (כולל שדות גידול ושעות עבודה) בצד שמאל, '
+    'והיסטוריה אישית של העבודות שהוא עצמו הזין בצד ימין. '
+    'העובד רואה רק את הרשומות שהוא הזין (לפי שם), ואין לו גישה לרשומות של אחרים, לעריכה, למחיקה, לייצוא או ללוג שינויים. '
+    'ממשק הפורטל מעוצב בגוון ירוק (המזוהה עם עבודת שדה) ונפרד מממשק המנהל.',
     size=11)
 
 add_rtl_para(doc,
     'ממשק Web לניהול (למנהל): מנהל החווה ניגש לממשק Web שהוא לוח בקרה מלא עם אימות סיסמה. '
     'הממשק כולל: צפייה בכל הרשומות ממוינות לפי תאריך עם עימוד (50 רשומות לדף), '
+    'חיפוש גלובלי מיידי על פני כל השדות הנראים, '
     'סינון לפי שם לקוח, תאריך, שדה ומפעיל (עם שמירה בזיכרון דפדפן), '
-    'הוספה ידנית עם השלמה אוטומטית משדות קיימים, '
-    'עריכה ידנית בטופס נפרד, עריכה מוטבעת (double-click על תא), '
+    'הוספה מהירה (Quick-Add modal) בלי לעזוב את הדף, '
+    'הוספה ידנית מלאה עם השלמה אוטומטית לכל השדות כולל גידול, '
+    'עריכה מוטבעת (double-click על תא) ועריכה בטופס נפרד, '
     'מחיקה בודדת ומחיקה מרובה, שכפול רשומה, '
-    'ייצוא לאקסל וCSV, ייבוא אקסל עם ניקוי כפילויות, '
-    'דוח חודשי מפורט, לוג שינויים מלא, הדפסה/PDF, ושינוי סיסמה.',
+    'ייצוא לאקסל וCSV (עם הסינון הנוכחי), ייבוא אקסל עם ניקוי כפילויות, '
+    'דוח חודשי עם 3 גרפים (Chart.js), לוג שינויים מלא, הדפסה/PDF, שינוי סיסמה, '
+    'דוח שעות לפי חלקה וגידול (/field-report) עם טבלת pivot ותרשימים, '
+    'הדפסת PDF של דוח החלקה (/field-report/print), '
+    'ודוח לקוח (/client-report) עם היסטוריה מלאה, סה"כ שעות ו-4 גרפים.',
     size=11)
 
 add_heading_rtl(doc, 'אחסון הנתונים', 2)
@@ -226,7 +262,9 @@ add_rtl_para(doc,
 
 add_heading_rtl(doc, 'אבטחה', 2)
 add_rtl_para(doc,
-    'המערכת כוללת מספר שכבות הגנה: אימות סיסמה לכל הממשק ה-Web, '
+    'המערכת כוללת מספר שכבות הגנה: '
+    'מסך כניסה מאוחד אחד (/login) עם בורר תפקיד — מנהל (כחול) או עובד (ירוק). '
+    'בחירת התפקיד משנה את הטופס ואת הסיסמה שנבדקת (WEB_PASSWORD לעומת WORKER_PASSWORD). '
     'הגבלת קצב כניסות (5 ניסיונות בדקה) למניעת brute force, '
     'CSRF tokens לכל הטפסים ובקשות AJAX, '
     'session timeout של 8 שעות, '
@@ -313,8 +351,15 @@ make_rtl_table(doc,
         ['/export', 'GET', 'הורדת קובץ Excel'],
         ['/export/csv', 'GET', 'הורדת קובץ CSV'],
         ['/import', 'GET, POST', 'העלאת קובץ Excel עם dedup'],
-        ['/api/entries', 'GET', 'REST API — רשומות בפורמט JSON'],
+        ['/api/entries', 'GET', 'REST API — רשומות בפורמט JSON (עם סינון)'],
         ['/api/entries/<id>', 'PATCH', 'REST API — עריכה מוטבעת'],
+        ['/api/docs', 'GET', 'תיעוד REST API (HTML)'],
+        ['/worker/login', 'GET', 'redirect → /login (לאחר איחוד מסך הכניסה)'],
+        ['/worker/logout', 'GET', 'יציאת עובד → חזרה ל-/login'],
+        ['/worker', 'GET, POST', 'פורטל עובד — טופס הזנה + היסטוריה אישית'],
+        ['/field-report', 'GET', 'דוח שעות לפי חלקה × גידול — pivot table + גרפים (מנהל)'],
+        ['/field-report/print', 'GET', 'עמוד הדפסה/PDF של דוח החלקה'],
+        ['/client-report', 'GET', 'דוח לקוח — כל הרשומות + שעות + 4 גרפים'],
     ],
     col_widths=[4, 2.5, 8]
 )
@@ -330,7 +375,9 @@ make_rtl_table(doc,
         ['תאריך', 'תאריך ביצוע (YYYY-MM-DD, שדה חובה)'],
         ['עבודה', 'סוג: חריש / ריסוס / קציר / דיסוק / אחר (שדה חובה)'],
         ['שם חלקה', 'שם או מזהה החלקה החקלאית'],
+        ['גידול', 'סוג הגידול בחלקה (חיטה, תירס, כותנה... — רשות, autocomplete)'],
         ['כמות', 'כמות (למשל: "30 דונם")'],
+        ['שעות', 'שעות עבודה (ערך מספרי, למשל: 3.5 — רשות)'],
         ['כלי', 'כלי העבודה (למשל: "טרקטור")'],
         ['מפעיל', 'שם מפעיל הציוד'],
         ['הערות', 'הערות חופשיות'],
@@ -356,40 +403,29 @@ add_rtl_para(doc, '• Web (נייד) — כרטיסיות mobile cards במקו
 doc.add_paragraph()
 add_heading_rtl(doc, 'סעיף 4 — תדפיסי מסכים', 1)
 
-add_rtl_para(doc, 'מסך 1 — דף כניסה עם אימות סיסמה', bold=True, size=11)
-add_picture_safe(doc, SCR_LOGIN)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 2 — לוח בקרה ראשי: כרטיסיות סטטיסטיקה, גרף ותגיות צבעוניות', bold=True, size=11)
-add_picture_safe(doc, SCR_MAIN_FULL)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 3 — טבלת הרשומות: עריכה מוטבעת, מחיקה מרובה, שכפול ועימוד', bold=True, size=11)
-add_picture_safe(doc, SCR_MAIN_TABLE)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 4 — טופס הוספת רשומה חדשה עם השלמה אוטומטית', bold=True, size=11)
-add_picture_safe(doc, SCR_ADD)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 5 — דוח חודשי: pivot לפי חודש וסוג עבודה + לקוחות מובילים', bold=True, size=11)
-add_picture_safe(doc, SCR_SUMMARY)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 6 — לוג שינויים: רישום כל פעולות הכתיבה עם תאריך ומשתמש', bold=True, size=11)
-add_picture_safe(doc, SCR_AUDIT)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 7 — דף הדפסה/PDF', bold=True, size=11)
-add_picture_safe(doc, SCR_PRINT)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 8 — ייבוא נתונים מקובץ Excel עם ניקוי כפילויות', bold=True, size=11)
-add_picture_safe(doc, SCR_IMPORT)
-doc.add_paragraph()
-
-add_rtl_para(doc, 'מסך 9 — אישור מחיקת רשומה', bold=True, size=11)
-add_picture_safe(doc, SCR_DELETE)
+screens = [
+    ('מסך 1א — מסך כניסה מאוחד: מצב מנהל (כחול, סיסמה בלבד)',         SCR_LOGIN),
+    ('מסך 1ב — מסך כניסה מאוחד: מצב עובד (ירוק, שם + סיסמה)',         SCR_LOGIN_WORKER),
+    ('מסך 2 — לוח בקרה ראשי: כרטיסיות סטטיסטיקה וגרפים',             SCR_MAIN_FULL),
+    ('מסך 3 — טבלת רשומות: חיפוש גלובלי, עריכה מוטבעת ועימוד',        SCR_MAIN_TABLE),
+    ('מסך 4 — חיפוש גלובלי מסנן שורות בכל העמודות בזמן אמת',          SCR_GLOBAL_SEARCH),
+    ('מסך 5 — Quick-Add modal: הוספת רשומה מהירה בלי לעזוב את הדף',   SCR_QUICK_ADD),
+    ('מסך 6 — טופס הוספה מלא עם השלמה אוטומטית',                       SCR_ADD),
+    ('מסך 7 — דוח חודשי עם 3 גרפי Chart.js (עוגה, עמודות, אופקי)',     SCR_SUMMARY),
+    ('מסך 8 — לוג שינויים: כל פעולות הכתיבה עם תאריך ומשתמש',          SCR_AUDIT),
+    ('מסך 9 — דף הדפסה/PDF',                                            SCR_PRINT),
+    ('מסך 10 — ייבוא נתונים מקובץ Excel עם ניקוי כפילויות',            SCR_IMPORT),
+    ('מסך 11 — תיעוד REST API: נתיבים, פרמטרים ודוגמות קוד',           SCR_API_DOCS),
+    ('מסך 12 — אישור מחיקת רשומה',                                      SCR_DELETE),
+    ('מסך 13 — פורטל עובד: טופס הזנה (כולל גידול ושעות) + היסטוריה אישית', SCR_WORKER_MAIN),
+    ('מסך 14 — דוח שעות לפי חלקה וגידול: pivot table + גרפי בר ודונאט',   SCR_FIELD_REPORT),
+    ('מסך 15 — דוח לקוח: 4 גרפים + טבלת כל הרשומות',                      SCR_CLIENT_REPORT),
+    ('מסך 16 — עמוד הדפסה/PDF של דוח חלקה (עיצוב A4)',                     SCR_FIELD_PRINT),
+]
+for title, path in screens:
+    add_rtl_para(doc, title, bold=True, size=11)
+    add_picture_safe(doc, path)
+    doc.add_paragraph()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — UML
@@ -406,6 +442,7 @@ add_heading_rtl(doc, '5.1 Use Case Diagram', 2)
 add_picture_safe(doc, IMG_USECASE)
 add_rtl_para(doc, 'שחקנים (Actors):', bold=True, size=11)
 add_rtl_para(doc, '• עובד שדה — משתמש בבוט טלגרם להזנת עבודות וצפייה', size=11)
+add_rtl_para(doc, '• עובד Web — משתמש בפורטל /worker להזנה וצפייה בהיסטוריה האישית', size=11)
 add_rtl_para(doc, '• מנהל — משתמש בממשק ה-Web לניהול מלא', size=11)
 add_rtl_para(doc, '• Google Sheets — מערכת חיצונית לאחסון', size=11)
 doc.add_paragraph()
@@ -432,6 +469,12 @@ make_rtl_table(doc,
         ['צפייה בלוג שינויים', 'מנהל'],
         ['הדפסה / PDF', 'מנהל'],
         ['שינוי סיסמה', 'מנהל'],
+        ['הוספה מהירה (Quick-Add modal)', 'מנהל'],
+        ['חיפוש גלובלי בכל השדות', 'מנהל'],
+        ['צפייה בתיעוד REST API', 'מנהל'],
+        ['כניסה לפורטל עובד עם שם + סיסמה', 'עובד Web'],
+        ['הזנת עבודה דרך פורטל Web', 'עובד Web'],
+        ['צפייה בהיסטוריה האישית (העבודות שלי)', 'עובד Web'],
     ],
     col_widths=[9, 5.5]
 )
@@ -445,11 +488,11 @@ make_rtl_table(doc,
     headers=['מחלקה', 'תכונות עיקריות', 'פעולות עיקריות'],
     rows=[
         ['WorkEntry (dataclass)',
-         'client, date, task, field_name\nquantity, tool, operator\nnotes, entered_by',
-         '__post_init__() — validations\nto_sheet_row(), to_dict()\nfrom_form(), from_bot()'],
+         'client, date, task, field_name\ncrop, amount, hours\ntool, operator, notes, entered_by',
+         '__post_init__() — validations\nto_sheet_row(), to_dict()\nfrom_form(), from_bot(), from_dict()'],
         ['FlaskApp',
          'app: Flask\nCOLUMNS: list\nPAGE_SIZE: int\n_current_password: str',
-         'index(), login(), add(), edit(), delete()\nbulk_delete(), duplicate(), summary()\naudit(), print(), export(), import_data()\napi_entries(), api_entry_patch()'],
+         'index(), login(), add(), edit(), delete()\nbulk_delete(), duplicate(), summary()\naudit(), print(), export(), import_data()\napi_entries(), api_entry_patch()\nfield_report(), field_report_print()\nclient_report()'],
         ['GoogleSheetsConnector',
          '_gs_client: gspread.Client\n_cache_data, _cache_time\n_CACHE_TTL=30\n_gs_lock: Lock',
          '_get_sheet()\nload_data_from_gsheet()\nappend_row_to_gsheet(entry: WorkEntry)\nsave_data_to_gsheet(df)\n_invalidate_cache()'],
@@ -475,7 +518,11 @@ for i, s in enumerate([
     'אם "הזן עבודה": הבוט מבקש שם לקוח (CLIENT)',
     'המשתמש מזין תאריך (YYYY-MM-DD או "היום") — אם שגוי, שואל שוב',
     'בחירת סוג עבודה מלוח מקשים (חריש / ריסוס / קציר / דיסוק / אחר)',
-    'הזנת שם חלקה, כמות, כלי, מפעיל, הערות (ניתן לדלג על הערות)',
+    'הזנת שם חלקה (FIELD)',
+    'הזנת גידול (CROP) — ניתן לדלג עם כפתור "דלג"',
+    'הזנת כמות (AMOUNT)',
+    'הזנת שעות עבודה (HOURS) — ניתן לדלג עם כפתור "דלג"',
+    'הזנת כלי, מפעיל, הערות (ניתן לדלג על הערות)',
     'WorkEntry.__post_init__() מאמת את כל השדות',
     'הצגת סיכום — המשתמש מאשר ("כן") או מבטל ("לא")',
     'אם אושר: append_row_to_gsheet() + _log_audit() ← חזרה לתפריט',
@@ -496,13 +543,16 @@ make_rtl_table(doc,
         ['CLIENT', 'המתנה לשם לקוח', 'DATE'],
         ['DATE', 'המתנה לתאריך', 'TASK (תקין) / DATE (שגוי)'],
         ['TASK', 'בחירת סוג עבודה', 'FIELD'],
-        ['FIELD', 'המתנה לשם חלקה', 'AMOUNT'],
-        ['AMOUNT', 'המתנה לכמות', 'TOOL'],
+        ['FIELD', 'המתנה לשם חלקה', 'CROP'],
+        ['CROP', 'המתנה לגידול (ניתן לדלג)', 'AMOUNT'],
+        ['AMOUNT', 'המתנה לכמות', 'HOURS'],
+        ['HOURS', 'המתנה לשעות עבודה (ניתן לדלג)', 'TOOL'],
         ['TOOL', 'המתנה לכלי', 'OPERATOR'],
         ['OPERATOR', 'המתנה למפעיל', 'NOTE'],
         ['NOTE', 'המתנה להערות (אפשר לדלג)', 'CONFIRM'],
         ['CONFIRM', 'אישור הנתונים', 'MENU (שמירה/ביטול)'],
         ['SEARCH', 'המתנה לשם לקוח לחיפוש', 'MENU (לאחר הצגת תוצאות)'],
+        ['EDIT_SELECT', 'בחירת רשומה לצפייה (1-5)', 'MENU (לאחר הצגת פרטים וקישור)'],
         ['END', 'סיום השיחה', '—'],
     ],
     col_widths=[2.5, 4.5, 7.5]
@@ -526,6 +576,10 @@ doc.add_paragraph()
 make_rtl_table(doc,
     headers=['Commit Hash', 'תיאור'],
     rows=[
+        ['ebfd1be', 'Add work hours & crop tracking, field/client reports, PDF print, worker reminders'],
+        ['0774f0a', 'Unify login: single /login page for both manager and worker with role selector'],
+        ['efaef93', 'Add worker portal: separate /worker page with own password, add-entry form and personal history'],
+        ['1072140', 'Add 8 improvements: global search, quick-add modal, summary charts, bot edit-any, bot photo, client reminders, API docs, pytest (27 tests)'],
         ['1caf955', 'Add improvements #1-#12: CSRF, rate limit, session timeout, inline edit, mobile cards, CSV export, audit log, REST API'],
         ['67b8f9f', 'Refactor: add WorkEntry dataclass for validated data management'],
         ['410648f', 'Add improvements #1-#10: print PDF, duplicate row, bulk delete, monthly summary, change password, filter memory, smart import'],
@@ -534,7 +588,6 @@ make_rtl_table(doc,
         ['122b60b', 'Add GSheets cache, Chart.js dashboard charts, and POST delete'],
         ['595896a', 'Add final submission documents, screenshots, and UML source files'],
         ['1725595', 'Keep one machine always running for Telegram polling'],
-        ['a879511', 'Fix bot thread: replace run_polling with manual async loop'],
         ['0150cb1', 'Switch to Fly.io v2 config with Dockerfile'],
     ],
     col_widths=[3.5, 11]
@@ -558,7 +611,8 @@ make_rtl_table(doc,
         ['gunicorn', '21.2.0', 'שרת WSGI לפרודקשן'],
         ['Bootstrap', '5.3.0 RTL', 'עיצוב UI, רספונסיביות, תמיכה עברית'],
         ['Bootstrap Icons', '1.11.0', 'אייקוני SVG (bi-*)'],
-        ['Chart.js', '4.x (CDN)', 'גרפי סטטיסטיקה בדפדפן'],
+        ['Chart.js', '4.x (CDN)', 'גרפי סטטיסטיקה בדפדפן (עוגה, עמודות, אופקי)'],
+        ['pytest', '9.x', 'בדיקות אוטומטיות — 27 בדיקות ל-WorkEntry ולנתיבי Flask'],
     ],
     col_widths=[4.5, 3, 7]
 )
