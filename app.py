@@ -689,7 +689,7 @@ app.jinja_env.globals["csrf_token"] = _get_csrf_token
 def _csrf_protect():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
-    if request.endpoint in ("login", "worker_login", "static"):
+    if request.endpoint in ("login", "static"):
         return
     if not session.get("logged_in") and not session.get("worker_logged_in"):
         return
@@ -735,7 +735,7 @@ def worker_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not session.get("worker_logged_in"):
-            return redirect(url_for("worker_login"))
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
 
@@ -744,19 +744,36 @@ def worker_required(f):
 def login():
     if session.get("logged_in"):
         return redirect(url_for("index"))
+    if session.get("worker_logged_in"):
+        return redirect(url_for("worker_index"))
     ip = request.remote_addr
     if request.method == "POST":
         if _check_rate_limit(ip):
             flash("יותר מדי ניסיונות — המתן דקה ❌", "danger")
-            return render_template("login.html")
-        if request.form.get("password", "") == _current_password:
-            session.permanent = True
-            session["logged_in"] = True
-            return redirect(url_for("index"))
-        _record_attempt(ip)
-        remaining = _LOGIN_MAX - len(_login_attempts.get(ip, []))
-        flash(f"סיסמה שגויה ❌ ({remaining} ניסיונות נותרו)", "danger")
-    return render_template("login.html")
+            role = request.form.get("role", "manager")
+            return render_template("login.html", selected_role=role)
+        role = request.form.get("role", "manager")
+        pwd  = request.form.get("password", "")
+        if role == "worker":
+            name = request.form.get("name", "").strip() or "עובד"
+            if pwd == _worker_password:
+                session.permanent = True
+                session["worker_logged_in"] = True
+                session["worker_name"]      = name
+                return redirect(url_for("worker_index"))
+            _record_attempt(ip)
+            flash("סיסמה שגויה ❌", "danger")
+            return render_template("login.html", selected_role="worker", form_name=name)
+        else:
+            if pwd == _current_password:
+                session.permanent = True
+                session["logged_in"] = True
+                return redirect(url_for("index"))
+            _record_attempt(ip)
+            remaining = _LOGIN_MAX - len(_login_attempts.get(ip, []))
+            flash(f"סיסמה שגויה ❌ ({remaining} ניסיונות נותרו)", "danger")
+            return render_template("login.html", selected_role="manager")
+    return render_template("login.html", selected_role="manager")
 
 
 @app.route("/logout")
@@ -1120,31 +1137,16 @@ def api_patch_entry(row_id):
 
 # ── Worker portal ──────────────────────────────────────────────────────────────
 
-@app.route("/worker/login", methods=["GET", "POST"])
+@app.route("/worker/login")
 def worker_login():
-    if session.get("worker_logged_in"):
-        return redirect(url_for("worker_index"))
-    ip = request.remote_addr
-    if request.method == "POST":
-        if _check_rate_limit(ip):
-            flash("יותר מדי ניסיונות — המתן דקה ❌", "danger")
-            return render_template("worker_login.html")
-        pwd = request.form.get("password", "")
-        if pwd == _worker_password:
-            session.permanent = True
-            session["worker_logged_in"] = True
-            session["worker_name"]      = request.form.get("name", "").strip() or "עובד"
-            return redirect(url_for("worker_index"))
-        _record_attempt(ip)
-        flash("סיסמה שגויה ❌", "danger")
-    return render_template("worker_login.html")
+    return redirect(url_for("login"))
 
 
 @app.route("/worker/logout")
 def worker_logout():
     session.pop("worker_logged_in", None)
     session.pop("worker_name", None)
-    return redirect(url_for("worker_login"))
+    return redirect(url_for("login"))
 
 
 @app.route("/worker", methods=["GET", "POST"])

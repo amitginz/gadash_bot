@@ -3,39 +3,107 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="csrf-token" content="{{ csrf_token() }}" />
   <title>כניסה — גד"ש</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
   <style>
     body {
-      background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%);
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
       font-family: 'Segoe UI', 'Arial Hebrew', sans-serif;
+      transition: background .4s ease;
+      background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%);
     }
+    body.worker-mode {
+      background: linear-gradient(135deg, #1e4d2b 0%, #2d7a42 60%, #4aab60 100%);
+    }
+
     .login-card {
       background: #fff;
-      border-radius: 18px;
-      box-shadow: 0 8px 40px rgba(0,0,0,.35);
-      padding: 2.5rem 2rem;
+      border-radius: 20px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.32);
+      padding: 2.2rem 2rem 2rem;
       width: 100%;
-      max-width: 380px;
+      max-width: 400px;
+      transition: box-shadow .3s;
     }
-    .login-logo { font-size: 2.5rem; margin-bottom: .3rem; }
-    .login-title { font-size: 1.3rem; font-weight: 700; color: #1a2f4e; margin-bottom: .1rem; }
-    .login-sub { font-size: .82rem; color: #64748b; margin-bottom: 1.5rem; }
+
+    /* Role selector */
+    .role-bar {
+      display: flex;
+      gap: .5rem;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: .35rem;
+      margin-bottom: 1.6rem;
+    }
+    .role-btn {
+      flex: 1;
+      border: none;
+      border-radius: 9px;
+      padding: .55rem .5rem;
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: #64748b;
+      transition: background .2s, color .2s, box-shadow .2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .4rem;
+    }
+    .role-btn.active-manager {
+      background: #1a2f4e;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(26,47,78,.3);
+    }
+    .role-btn.active-worker {
+      background: #1e4d2b;
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(30,77,43,.3);
+    }
+
+    .logo { font-size: 2.6rem; }
+    .login-title { font-size: 1.25rem; font-weight: 700; color: #1a2f4e; }
+    body.worker-mode .login-title { color: #1e4d2b; }
+    .login-sub { font-size: .82rem; color: #64748b; margin-bottom: 1.2rem; }
+
     .form-label { font-weight: 600; font-size: .88rem; color: #374151; }
-    .btn-login { background: #1a2f4e; border: none; font-weight: 600; width: 100%; padding: .65rem; border-radius: 9px; }
-    .btn-login:hover { background: #2a4a72; }
+
+    .btn-login {
+      border: none;
+      font-weight: 600;
+      width: 100%;
+      padding: .65rem;
+      border-radius: 9px;
+      background: #1a2f4e;
+      color: #fff;
+      transition: background .25s;
+    }
+    body.worker-mode .btn-login { background: #1e4d2b; }
+    .btn-login:hover { opacity: .88; }
+
+    #nameField { display: none; }
+    body.worker-mode #nameField { display: block; }
   </style>
 </head>
-<body>
+<body id="loginBody">
   <div class="login-card text-center">
-    <div class="login-logo">🌾</div>
+    <div class="logo mb-1">🌾</div>
     <div class="login-title">גד"ש — ניהול עבודות</div>
     <div class="login-sub">מערכת ניהול עבודות שדה חקלאיות</div>
+
+    <!-- Role selector -->
+    <div class="role-bar">
+      <button type="button" class="role-btn active-manager" id="btnManager" onclick="setRole('manager')">
+        🏢 מנהל
+      </button>
+      <button type="button" class="role-btn" id="btnWorker" onclick="setRole('worker')">
+        👷 עובד
+      </button>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
@@ -44,13 +112,48 @@
     {% endwith %}
 
     <form method="POST" class="text-start">
+      <input type="hidden" name="role" id="roleInput" value="{{ selected_role or 'manager' }}" />
+
+      <div id="nameField" class="mb-3">
+        <label class="form-label">שם העובד</label>
+        <input type="text" name="name" id="nameInput" class="form-control"
+               placeholder="הכנס שמך" value="{{ form_name or '' }}" />
+      </div>
+
       <div class="mb-3">
         <label class="form-label">סיסמה</label>
-        <input type="password" name="password" class="form-control" placeholder="הכנס סיסמה" autofocus required />
+        <input type="password" name="password" class="form-control"
+               placeholder="הכנס סיסמה" autofocus required />
       </div>
-      <button type="submit" class="btn btn-primary btn-login">כניסה למערכת</button>
+
+      <button type="submit" class="btn btn-login">כניסה</button>
     </form>
   </div>
+
+  <script>
+    const INIT_ROLE = document.getElementById('roleInput').value;
+
+    function setRole(role) {
+      document.getElementById('roleInput').value = role;
+      const body = document.getElementById('loginBody');
+      const bm = document.getElementById('btnManager');
+      const bw = document.getElementById('btnWorker');
+      if (role === 'worker') {
+        body.classList.add('worker-mode');
+        bm.className = 'role-btn';
+        bw.className = 'role-btn active-worker';
+        document.getElementById('nameInput').required = true;
+      } else {
+        body.classList.remove('worker-mode');
+        bm.className = 'role-btn active-manager';
+        bw.className = 'role-btn';
+        document.getElementById('nameInput').required = false;
+      }
+    }
+
+    // Restore role on page load (after failed login)
+    setRole(INIT_ROLE);
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
