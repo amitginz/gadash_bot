@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <title>פורטל עובד — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    :root {
+      --green:     #1e4d2b;
+      --green-mid: #2d7a42;
+      --green-lt:  #dcfce7;
+      --surface:   #f0fdf4;
+    }
+    body { background: var(--surface); font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; color: #1e293b; }
+
+    .top-nav {
+      background: var(--green);
+      padding: .7rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.05rem; text-decoration: none; }
+    .top-nav .worker-badge {
+      background: rgba(255,255,255,.15);
+      color: #fff; border-radius: 20px;
+      padding: .2rem .8rem; font-size: .82rem;
+    }
+    .top-nav a.logout { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; }
+    .top-nav a.logout:hover { color: #fff; }
+
+    .hero {
+      background: linear-gradient(135deg, var(--green) 0%, var(--green-mid) 100%);
+      color: #fff;
+      padding: 1.8rem 1.5rem 1.4rem;
+    }
+    .hero h1 { font-size: 1.4rem; font-weight: 700; margin: 0; }
+    .hero p  { font-size: .85rem; opacity: .8; margin: .3rem 0 0; }
+
+    .stat-pill {
+      background: rgba(255,255,255,.18);
+      border-radius: 20px; padding: .3rem 1rem;
+      font-size: .85rem; display: inline-flex; align-items: center; gap: .4rem;
+      margin-top: .8rem;
+    }
+
+    .form-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.07);
+      padding: 1.6rem;
+    }
+    .form-card h5 { font-size: 1rem; font-weight: 700; color: var(--green); margin-bottom: 1rem; }
+    .form-label   { font-size: .85rem; font-weight: 600; color: #475569; }
+    .btn-add      { background: var(--green); border: none; font-weight: 600; border-radius: 9px; }
+    .btn-add:hover { background: var(--green-mid); }
+
+    .history-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.07);
+      padding: 1.4rem;
+    }
+    .history-card h5 { font-size: 1rem; font-weight: 700; color: var(--green); margin-bottom: 1rem; }
+
+    .work-item {
+      border-right: 3px solid var(--green-mid);
+      padding: .6rem .9rem;
+      margin-bottom: .6rem;
+      background: var(--surface);
+      border-radius: 0 8px 8px 0;
+    }
+    .work-item .wi-client { font-weight: 700; font-size: .95rem; color: var(--green); }
+    .work-item .wi-meta   { font-size: .8rem; color: #64748b; margin-top: .15rem; }
+
+    .badge-task { padding: .18rem .55rem; border-radius: 20px; font-size: .72rem; font-weight: 600; }
+    .badge-חריש  { background:#fef3c7; color:#92400e; }
+    .badge-ריסוס { background:#dcfce7; color:#166534; }
+    .badge-קציר  { background:#dbeafe; color:#1e40af; }
+    .badge-דיסוק { background:#ede9fe; color:#5b21b6; }
+    .badge-אחר   { background:#f1f5f9; color:#475569; }
+
+    .empty-hint { text-align: center; color: #94a3b8; padding: 2.5rem 1rem; }
+    .empty-hint i { font-size: 2.5rem; opacity: .35; }
+  </style>
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="/worker">🌾 גד"ש — פורטל עובד</a>
+  <div class="d-flex align-items-center gap-3">
+    <span class="worker-badge">👤 {{ worker_name }}</span>
+    <a class="logout" href="/worker/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <div class="container-lg">
+    <h1>➕ הזנת עבודה חדשה</h1>
+    <p>מלא את הפרטים ולחץ שמור — הנתונים נשמרים מיד</p>
+    {% if my_count %}
+    <span class="stat-pill"><i class="bi bi-journal-check"></i> הזנת {{ my_count }} עבודות בסה"כ</span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="container-lg py-4">
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show mb-3 d-flex align-items-center gap-2" role="alert">
+      <i class="bi bi-{{ 'check-circle-fill' if category == 'success' else 'exclamation-triangle-fill' }}"></i>
+      <span>{{ message }}</span>
+      <button type="button" class="btn-close ms-auto" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="row g-4">
+
+    <!-- Add form -->
+    <div class="col-12 col-lg-6">
+      <div class="form-card">
+        <h5><i class="bi bi-plus-circle-fill"></i> רשומה חדשה</h5>
+        <form method="POST">
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label">שם לקוח *</label>
+              <input type="text" name="שם לקוח" class="form-control" required
+                     list="clientList" autocomplete="off" placeholder="שם הלקוח">
+              <datalist id="clientList">
+                {% for c in client_list %}<option value="{{ c }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label">תאריך *</label>
+              <input type="date" name="תאריך" class="form-control" required value="{{ today }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label">סוג עבודה *</label>
+              <select name="עבודה" class="form-select" required>
+                <option value="">בחר…</option>
+                {% for t in ['חריש','ריסוס','קציר','דיסוק','אחר'] %}
+                <option>{{ t }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6">
+              <label class="form-label">שם חלקה</label>
+              <input type="text" name="שם חלקה" class="form-control"
+                     list="fieldList" autocomplete="off" placeholder="חלקה">
+              <datalist id="fieldList">
+                {% for f in field_list %}<option value="{{ f }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label">כמות</label>
+              <input type="text" name="כמות" class="form-control" placeholder="30 דונם">
+            </div>
+            <div class="col-6">
+              <label class="form-label">כלי</label>
+              <input type="text" name="כלי" class="form-control"
+                     list="toolList" autocomplete="off" placeholder="טרקטור">
+              <datalist id="toolList">
+                {% for t in tool_list %}<option value="{{ t }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
+              <label class="form-label">מפעיל</label>
+              <input type="text" name="מפעיל" class="form-control"
+                     list="operatorList" autocomplete="off" placeholder="שם מפעיל" value="{{ worker_name }}">
+              <datalist id="operatorList">
+                {% for o in operator_list %}<option value="{{ o }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-12">
+              <label class="form-label">הערות</label>
+              <textarea name="הערות" class="form-control" rows="2" placeholder="הערות אם יש"></textarea>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-success btn-add w-100 mt-3 py-2">
+            <i class="bi bi-floppy-fill"></i> שמור עבודה
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Recent entries -->
+    <div class="col-12 col-lg-6">
+      <div class="history-card">
+        <h5><i class="bi bi-clock-history"></i> העבודות האחרונות שלי</h5>
+        {% if recent %}
+          {% for row in recent %}
+          <div class="work-item">
+            <div class="wi-client">{{ row['שם לקוח'] }}</div>
+            <div class="wi-meta">
+              <span class="badge-task badge-{{ row['עבודה'] }}">{{ row['עבודה'] }}</span>
+              &nbsp;{{ row['תאריך'] }}
+              {% if row['שם חלקה'] %} &nbsp;·&nbsp; 📍 {{ row['שם חלקה'] }}{% endif %}
+              {% if row['כמות'] %} &nbsp;·&nbsp; {{ row['כמות'] }}{% endif %}
+              {% if row['מפעיל'] %} &nbsp;·&nbsp; 👤 {{ row['מפעיל'] }}{% endif %}
+            </div>
+            {% if row['הערות'] %}
+            <div class="wi-meta text-muted">💬 {{ row['הערות'] }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+          <p class="text-muted small mt-2 mb-0 text-center">מציג {{ recent|length }} עבודות אחרונות</p>
+        {% else %}
+          <div class="empty-hint">
+            <i class="bi bi-journal-x d-block mb-2"></i>
+            <p class="mb-0">עדיין לא הזנת עבודות</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // CSRF inject
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  document.querySelectorAll('form').forEach(form => {
+    if (!form.querySelector('[name="csrf_token"]')) {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = CSRF;
+      form.appendChild(inp);
+    }
+  });
+
+  // Auto-dismiss success alerts
+  document.querySelectorAll('.alert-success').forEach(el => {
+    setTimeout(() => bootstrap.Alert.getOrCreateInstance(el).close(), 3500);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <title>כניסת עובד — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <style>
+    body {
+      background: linear-gradient(135deg, #1e4d2b 0%, #2d7a42 60%, #4aab60 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Segoe UI', 'Arial Hebrew', sans-serif;
+    }
+    .login-card {
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.3);
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 380px;
+    }
+    .login-logo { font-size: 2.8rem; margin-bottom: .3rem; }
+    .login-title { font-size: 1.25rem; font-weight: 700; color: #1e4d2b; }
+    .login-sub   { font-size: .82rem; color: #64748b; margin-bottom: 1.5rem; }
+    .form-label  { font-weight: 600; font-size: .88rem; color: #374151; }
+    .btn-login   { background: #1e4d2b; border: none; font-weight: 600; width: 100%; padding: .65rem; border-radius: 9px; }
+    .btn-login:hover { background: #2d7a42; }
+    .manager-link { font-size: .8rem; color: #64748b; margin-top: 1rem; display: block; text-align: center; }
+    .manager-link a { color: #1e4d2b; }
+  </style>
+</head>
+<body>
+  <div class="login-card text-center">
+    <div class="login-logo">🌱</div>
+    <div class="login-title">גד"ש — פורטל עובד</div>
+    <div class="login-sub">הזנת עבודות שדה</div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }} py-2 mb-3 text-start" role="alert">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+
+    <form method="POST" class="text-start">
+      <div class="mb-3">
+        <label class="form-label">שם העובד</label>
+        <input type="text" name="name" class="form-control" placeholder="הכנס שמך" autofocus required />
+      </div>
+      <div class="mb-3">
+        <label class="form-label">סיסמה</label>
+        <input type="password" name="password" class="form-control" placeholder="סיסמת עובד" required />
+      </div>
+      <button type="submit" class="btn btn-success btn-login">כניסה</button>
+    </form>
+
+    <span class="manager-link">מנהל? <a href="/login">כניסת מנהל</a></span>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

@@ -673,6 +673,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
 _current_password = os.environ.get("WEB_PASSWORD", "gadash2025")
+_worker_password  = os.environ.get("WORKER_PASSWORD", "worker2025")
 
 # ── CSRF (manual, no extra dependency needed) ──────────────────────────────────
 
@@ -688,9 +689,9 @@ app.jinja_env.globals["csrf_token"] = _get_csrf_token
 def _csrf_protect():
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
-    if request.endpoint in ("login", "static"):
+    if request.endpoint in ("login", "worker_login", "static"):
         return
-    if not session.get("logged_in"):
+    if not session.get("logged_in") and not session.get("worker_logged_in"):
         return
     token = (request.form.get("csrf_token")
              or request.headers.get("X-CSRFToken"))
@@ -726,6 +727,15 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if not session.get("logged_in"):
             return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def worker_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get("worker_logged_in"):
+            return redirect(url_for("worker_login"))
         return f(*args, **kwargs)
     return decorated
 
@@ -1106,6 +1116,72 @@ def api_patch_entry(row_id):
     save_data_to_gsheet(df)
     _log_audit("edit-inline", "Web", f"row {row_id}: {field}={value}")
     return jsonify({"ok": True, "row_id": row_id, "field": field, "value": value})
+
+
+# ── Worker portal ──────────────────────────────────────────────────────────────
+
+@app.route("/worker/login", methods=["GET", "POST"])
+def worker_login():
+    if session.get("worker_logged_in"):
+        return redirect(url_for("worker_index"))
+    ip = request.remote_addr
+    if request.method == "POST":
+        if _check_rate_limit(ip):
+            flash("יותר מדי ניסיונות — המתן דקה ❌", "danger")
+            return render_template("worker_login.html")
+        pwd = request.form.get("password", "")
+        if pwd == _worker_password:
+            session.permanent = True
+            session["worker_logged_in"] = True
+            session["worker_name"]      = request.form.get("name", "").strip() or "עובד"
+            return redirect(url_for("worker_index"))
+        _record_attempt(ip)
+        flash("סיסמה שגויה ❌", "danger")
+    return render_template("worker_login.html")
+
+
+@app.route("/worker/logout")
+def worker_logout():
+    session.pop("worker_logged_in", None)
+    session.pop("worker_name", None)
+    return redirect(url_for("worker_login"))
+
+
+@app.route("/worker", methods=["GET", "POST"])
+@worker_required
+def worker_index():
+    worker_name = session.get("worker_name", "עובד")
+    today = date.today().strftime("%Y-%m-%d")
+    lists = {}
+    try:
+        lists = _autocomplete_lists(load_data_from_gsheet())
+    except Exception:
+        pass
+
+    if request.method == "POST":
+        try:
+            entry = WorkEntry.from_form(request.form, entered_by=worker_name)
+            append_row_to_gsheet(entry)
+            _log_audit("add", worker_name, f"{entry.client} | {entry.date} | {entry.task}")
+            flash("הרשומה נוספה בהצלחה ✅", "success")
+        except ValueError as e:
+            flash(f"שגיאת אימות: {e} ❌", "danger")
+        except Exception as e:
+            flash(f"שגיאה בשמירה: {e} ❌", "danger")
+        return redirect(url_for("worker_index"))
+
+    # Show only this worker's recent entries
+    try:
+        df = load_data_from_gsheet()
+        my_df = df[df["מזין"].str.contains(worker_name, case=False, na=False)]
+        recent = my_df.tail(20).sort_values("תאריך", ascending=False).to_dict(orient="records")
+        my_count = len(my_df)
+    except Exception:
+        recent, my_count = [], 0
+
+    return render_template("worker_index.html",
+                           worker_name=worker_name, today=today,
+                           recent=recent, my_count=my_count, **lists)
 
 
 # ── Start bot thread ───────────────────────────────────────────────────────────
