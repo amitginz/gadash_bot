@@ -136,27 +136,85 @@ def _invalidate_cache():
     _cache_time = 0.0
 
 
+_GS_SCOPE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
+def _init_gs_client():
+    """Initialise _gs_client. Must be called while _gs_lock is held."""
+    global _gs_client
+    if _gs_client is not None:
+        return
+    raw = os.environ.get("GOOGLE_CREDS")
+    if raw:
+        creds = Credentials.from_service_account_info(json.loads(raw), scopes=_GS_SCOPE)
+    elif os.path.exists("credentials.json"):
+        creds = Credentials.from_service_account_file("credentials.json", scopes=_GS_SCOPE)
+    else:
+        raise RuntimeError("No Google credentials found.")
+    _gs_client = gspread.authorize(creds)
+
+
 def _get_sheet():
     global _gs_client
+    last_exc = None
+    for attempt in range(3):
+        with _gs_lock:
+            try:
+                _init_gs_client()
+                return _gs_client.open("Gadash Data").sheet1
+            except Exception as e:
+                last_exc = e
+                _gs_client = None
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+    raise last_exc
+
+
+def _get_settings_sheet():
+    """Opens (or creates) the Settings worksheet. Returns None on failure."""
+    global _gs_client
     with _gs_lock:
-        if _gs_client is None:
-            scope = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive",
-            ]
-            raw = os.environ.get("GOOGLE_CREDS")
-            if raw:
-                creds = Credentials.from_service_account_info(json.loads(raw), scopes=scope)
-            elif os.path.exists("credentials.json"):
-                creds = Credentials.from_service_account_file("credentials.json", scopes=scope)
-            else:
-                raise RuntimeError("No Google credentials found.")
-            _gs_client = gspread.authorize(creds)
         try:
-            return _gs_client.open("Gadash Data").sheet1
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Settings")
+            except gspread.WorksheetNotFound:
+                return wb.add_worksheet("Settings", rows=10, cols=2)
         except Exception:
             _gs_client = None
-            raise
+            return None
+
+
+def _load_passwords():
+    """Read persisted passwords from the Settings sheet (falls back to env vars)."""
+    global _current_password, _worker_password
+    try:
+        ws = _get_settings_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        settings = {r[0]: r[1] for r in rows if len(r) >= 2 and r[0] and r[1]}
+        if settings.get("web_password"):
+            _current_password = settings["web_password"]
+        if settings.get("worker_password"):
+            _worker_password = settings["worker_password"]
+    except Exception:
+        pass
+
+
+def _save_passwords():
+    """Persist current passwords to the Settings sheet."""
+    try:
+        ws = _get_settings_sheet()
+        if ws:
+            ws.update([["web_password", _current_password],
+                       ["worker_password", _worker_password]], "A1")
+    except Exception:
+        pass
 
 
 def load_data_from_gsheet() -> pd.DataFrame:
@@ -749,6 +807,12 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 _current_password = os.environ.get("WEB_PASSWORD", "gadash2025")
 _worker_password  = os.environ.get("WORKER_PASSWORD", "worker2025")
 
+# Load persisted passwords from Google Sheets (overrides env vars if saved before)
+try:
+    _load_passwords()
+except Exception:
+    pass
+
 # ── CSRF (manual, no extra dependency needed) ──────────────────────────────────
 
 def _get_csrf_token() -> str:
@@ -850,6 +914,15 @@ def login():
     return render_template("login.html", selected_role="manager")
 
 
+@app.route("/health")
+def health():
+    try:
+        _get_sheet()
+        return jsonify({"status": "ok", "sheets": "connected"})
+    except Exception as e:
+        return jsonify({"status": "degraded", "sheets": str(e)}), 503
+
+
 @app.route("/logout")
 def logout():
     session.clear()
@@ -872,25 +945,21 @@ def change_password():
             flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
         else:
             _current_password = new1
-            flash("הסיסמה שונתה ✅ (שינוי זמני — לקבוע עדכן WEB_PASSWORD)", "success")
+            _save_passwords()
+            flash("הסיסמה שונתה בהצלחה ✅", "success")
     return render_template("change_password.html")
 
 
 # ── Filters helper ─────────────────────────────────────────────────────────────
 
 def _apply_filters(df):
-    client_filter = request.args.get("client", "").strip()
-    date_from     = request.args.get("date_from", "").strip()
-    date_to       = request.args.get("date_to", "").strip()
-    task_filter   = request.args.get("task", "").strip()
-    if client_filter:
-        df = df[df["שם לקוח"].str.contains(client_filter, case=False, na=False)]
-    if date_from:
-        df = df[df["תאריך"] >= date_from]
-    if date_to:
-        df = df[df["תאריך"] <= date_to]
-    if task_filter:
-        df = df[df["עבודה"] == task_filter]
+    q = request.args.get("q", "").strip()
+    if q:
+        mask = df.apply(
+            lambda row: row.astype(str).str.contains(q, case=False, na=False).any(),
+            axis=1,
+        )
+        df = df[mask]
     return df
 
 
@@ -940,10 +1009,7 @@ def index():
             month_count=month_count,
             top_client=top_client,
             top_task=top_task,
-            client_filter=request.args.get("client", "").strip(),
-            date_from=request.args.get("date_from", "").strip(),
-            date_to=request.args.get("date_to", "").strip(),
-            task_filter=request.args.get("task", "").strip(),
+            q_filter=request.args.get("q", "").strip(),
             task_options=sorted(VALID_TASKS),
             task_counts=task_counts,
             client_counts=client_counts,
@@ -957,7 +1023,7 @@ def index():
             "index.html",
             records=[], total_count=0, filtered_count=0,
             month_count=0, top_client="—", top_task="—",
-            client_filter="", date_from="", date_to="", task_filter="",
+            q_filter="",
             task_options=[], task_counts={}, client_counts={},
             page=1, total_pages=1, error=str(e),
         )
@@ -1222,6 +1288,26 @@ def worker_logout():
     session.pop("worker_logged_in", None)
     session.pop("worker_name", None)
     return redirect(url_for("login"))
+
+
+@app.route("/worker/change-password", methods=["POST"])
+@worker_required
+def worker_change_password():
+    global _worker_password
+    old  = request.form.get("old_password", "")
+    new1 = request.form.get("new_password", "")
+    new2 = request.form.get("confirm_password", "")
+    if old != _worker_password:
+        flash("הסיסמה הנוכחית שגויה ❌", "danger")
+    elif new1 != new2:
+        flash("הסיסמאות החדשות אינן תואמות ❌", "danger")
+    elif len(new1) < 4:
+        flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
+    else:
+        _worker_password = new1
+        _save_passwords()
+        flash("הסיסמה שונתה בהצלחה ✅", "success")
+    return redirect(url_for("worker_index"))
 
 
 @app.route("/worker", methods=["GET", "POST"])

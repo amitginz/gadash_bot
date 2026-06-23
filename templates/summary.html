@@ -1,37 +1,8 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>דוח חודשי — גד"ש</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
-    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
-    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav a { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; margin-inline-start: 1.2rem; }
-    .top-nav a:hover { color: #fff; }
-    .hero { background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%); color: #fff; padding: 2rem 1.5rem 1.5rem; }
-    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0; }
-    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.5rem; }
-    .table thead th { background: #1a2f4e; color: #fff; font-weight: 600; border: none; }
-    .table td, .table th { vertical-align: middle; }
-    .badge-num { background: #e8f0fb; color: #1a2f4e; border-radius: 20px; padding: .2rem .6rem; font-size: .8rem; font-weight: 700; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}דוח חודשי{% endblock %}
+{% block nav_summary %}active{% endblock %}
 
-<nav class="top-nav">
-  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <div>
-    <a href="/"><i class="bi bi-house"></i> ראשי</a>
-    <a href="/field-report"><i class="bi bi-map-fill"></i> שעות לפי חלקה</a>
-    <a href="/client-report"><i class="bi bi-person-fill"></i> דוח לקוח</a>
-    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-  </div>
-</nav>
-
+{% block content %}
 <div class="hero">
   <div class="container-lg">
     <h1>📊 דוח חודשי מצטבר</h1>
@@ -51,7 +22,6 @@
   </div>
   {% else %}
 
-  <!-- Charts row -->
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-5">
       <div class="card-section" style="height:280px;">
@@ -73,7 +43,6 @@
     </div>
   </div>
 
-  <!-- Monthly breakdown -->
   <div class="card-section mb-4">
     <h5 class="fw-bold mb-3">עבודות לפי חודש וסוג</h5>
     <div class="table-responsive">
@@ -93,9 +62,7 @@
             <td class="text-center">
               {% if row.get(t, 0) > 0 %}
               <span class="badge-num">{{ row[t] }}</span>
-              {% else %}
-              <span class="text-muted">—</span>
-              {% endif %}
+              {% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             {% endfor %}
             <td class="text-center fw-bold" style="background:#f0f5ff;">{{ row['סה"כ'] }}</td>
@@ -106,17 +73,12 @@
     </div>
   </div>
 
-  <!-- Client totals -->
   <div class="card-section">
     <h5 class="fw-bold mb-3">סה"כ עבודות לפי לקוח (Top 15)</h5>
     <div class="table-responsive">
-      <table class="table table-hover align-middle" style="font-size:.875rem; max-width: 500px;">
+      <table class="table table-hover align-middle" style="font-size:.875rem; max-width:500px;">
         <thead>
-          <tr>
-            <th>#</th>
-            <th>לקוח</th>
-            <th class="text-center">עבודות</th>
-          </tr>
+          <tr><th>#</th><th>לקוח</th><th class="text-center">עבודות</th></tr>
         </thead>
         <tbody>
           {% for row in client_totals %}
@@ -133,66 +95,43 @@
 
   {% endif %}
 </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-  const TASK_COLORS = {
-    'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'
-  };
+  const TASK_COLORS = {'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'};
   const monthlyData  = {{ monthly | tojson }};
   const taskTypes    = {{ task_types | tojson }};
   const clientTotals = {{ client_totals | tojson }};
 
-  // Task pie
   const taskTotals = {};
-  taskTypes.forEach(t => {
-    taskTotals[t] = monthlyData.reduce((s, r) => s + (Number(r[t]) || 0), 0);
-  });
+  taskTypes.forEach(t => { taskTotals[t] = monthlyData.reduce((s,r)=>s+(Number(r[t])||0),0); });
   new Chart(document.getElementById('taskPieChart'), {
-    type: 'doughnut',
-    data: {
-      labels: Object.keys(taskTotals),
-      datasets: [{ data: Object.values(taskTotals),
-        backgroundColor: Object.keys(taskTotals).map(t => TASK_COLORS[t] || '#64748b'),
-        borderWidth: 2 }]
-    },
-    options: { responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{ position:'right', labels:{ font:{size:12}, boxWidth:14 } } } }
+    type:'doughnut',
+    data:{ labels:Object.keys(taskTotals), datasets:[{ data:Object.values(taskTotals),
+      backgroundColor:Object.keys(taskTotals).map(t=>TASK_COLORS[t]||'#64748b'), borderWidth:2 }] },
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'right', labels:{font:{size:12},boxWidth:14} } } }
   });
 
-  // Monthly bar (chronological order)
-  const monthsAsc  = [...monthlyData].reverse();
-  const mLabels    = monthsAsc.map(r => r['חודש']);
-  const mTotals    = monthsAsc.map(r => Number(r['סה"כ']) || 0);
+  const monthsAsc = [...monthlyData].reverse();
   new Chart(document.getElementById('monthBarChart'), {
-    type: 'bar',
-    data: {
-      labels: mLabels,
-      datasets: [{ label:'עבודות', data: mTotals,
-        backgroundColor:'#3578c8cc', borderColor:'#1a2f4e',
-        borderWidth:1, borderRadius:5 }]
-    },
-    options: { responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false} },
-      scales:{ x:{ticks:{font:{size:11}}}, y:{ticks:{stepSize:1}, grid:{color:'#e2e8f0'}} } }
+    type:'bar',
+    data:{ labels:monthsAsc.map(r=>r['חודש']),
+      datasets:[{ label:'עבודות', data:monthsAsc.map(r=>Number(r['סה"כ'])||0),
+        backgroundColor:'#3578c8cc', borderColor:'#1a2f4e', borderWidth:1, borderRadius:5 }] },
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{font:{size:11}}}, y:{ticks:{stepSize:1},grid:{color:'#e2e8f0'}} } }
   });
 
-  // Client horizontal bar
-  const cNames  = clientTotals.map(r => r['שם לקוח']);
-  const cCounts = clientTotals.map(r => Number(r['סה"כ']) || 0);
   new Chart(document.getElementById('clientBarChart'), {
-    type: 'bar',
-    data: {
-      labels: cNames,
-      datasets: [{ data: cCounts, backgroundColor:'#1e8c4ecc',
-        borderColor:'#166534', borderWidth:1, borderRadius:5 }]
-    },
-    options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false} },
-      scales:{ x:{ticks:{stepSize:1}, grid:{color:'#e2e8f0'}},
-               y:{ticks:{font:{size:11}}} } }
+    type:'bar',
+    data:{ labels:clientTotals.map(r=>r['שם לקוח']),
+      datasets:[{ data:clientTotals.map(r=>Number(r['סה"כ'])||0),
+        backgroundColor:'#1e8c4ecc', borderColor:'#166534', borderWidth:1, borderRadius:5 }] },
+    options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{stepSize:1},grid:{color:'#e2e8f0'}}, y:{ticks:{font:{size:11}}} } }
   });
 </script>
-</body>
-</html>
+{% endblock %}

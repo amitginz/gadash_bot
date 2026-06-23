@@ -1,45 +1,21 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="csrf-token" content="{{ csrf_token() }}" />
-  <title>לוג שינויים — גד"ש</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
-    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; }
-    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav a { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; margin-inline-start: 1.2rem; }
-    .top-nav a:hover { color: #fff; }
-    .hero { background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%); color: #fff; padding: 1.5rem; }
-    .hero h1 { font-size: 1.4rem; font-weight: 700; margin: 0; }
-    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.2rem; }
-    .table { font-size: .85rem; }
-    .table thead th { background: #1a2f4e; color: #fff; font-weight: 600; border: none; white-space: nowrap; }
-    .badge-add    { background: #dcfce7; color: #166534; }
-    .badge-edit   { background: #dbeafe; color: #1e40af; }
-    .badge-delete { background: #fee2e2; color: #991b1b; }
-    .badge-import { background: #fef3c7; color: #92400e; }
-    .badge-undo   { background: #ede9fe; color: #5b21b6; }
-    .badge-action { border-radius: 20px; padding: .2rem .6rem; font-size: .75rem; font-weight: 600; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}לוג שינויים{% endblock %}
+{% block nav_audit %}active{% endblock %}
 
-<nav class="top-nav">
-  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <div>
-    <a href="/"><i class="bi bi-house"></i> ראשי</a>
-    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-  </div>
-</nav>
+{% block extra_style %}
+  .badge-add    { background:#dcfce7; color:#166534; }
+  .badge-edit   { background:#dbeafe; color:#1e40af; }
+  .badge-delete { background:#fee2e2; color:#991b1b; }
+  .badge-import { background:#fef3c7; color:#92400e; }
+  .badge-undo   { background:#ede9fe; color:#5b21b6; }
+  .badge-action { border-radius:20px; padding:.2rem .6rem; font-size:.75rem; font-weight:600; }
+  .table { font-size:.85rem; }
+  .table thead th { white-space:nowrap; }
+{% endblock %}
 
-<div class="hero">
-  <div class="container-lg">
-    <h1>🔍 לוג שינויים</h1>
-  </div>
+{% block content %}
+<div class="hero" style="padding:1.5rem;">
+  <div class="container-lg"><h1>🔍 לוג שינויים</h1></div>
 </div>
 
 <div class="container-lg py-4">
@@ -51,19 +27,14 @@
       <table class="table table-hover align-middle">
         <thead>
           <tr>
-            <th>תאריך ושעה</th>
-            <th>פעולה</th>
-            <th>משתמש</th>
-            <th>פרטים</th>
+            <th>תאריך ושעה</th><th>פעולה</th><th>משתמש</th><th>פרטים</th>
           </tr>
         </thead>
         <tbody>
           {% for e in entries %}
           <tr>
             <td class="text-muted small" style="white-space:nowrap;">{{ e.ts }}</td>
-            <td>
-              <span class="badge-action badge-{{ e.action.split('-')[0] }}">{{ e.action }}</span>
-            </td>
+            <td><span class="badge-action badge-{{ e.action.split('-')[0] }}">{{ e.action }}</span></td>
             <td>{{ e.user }}</td>
             <td class="text-muted small">{{ e.detail }}</td>
           </tr>
@@ -75,7 +46,4 @@
     {% endif %}
   </div>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+{% endblock %}

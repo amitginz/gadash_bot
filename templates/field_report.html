@@ -1,40 +1,15 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>שעות לפי חלקה וגידול — גד"ש</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
-    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
-    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav a { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; margin-inline-start: 1.2rem; }
-    .top-nav a:hover { color: #fff; }
-    .hero { background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%); color: #fff; padding: 2rem 1.5rem 1.5rem; }
-    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0; }
-    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.5rem; }
-    .table thead th { background: #1a2f4e; color: #fff; font-weight: 600; border: none; }
-    .table td, .table th { vertical-align: middle; }
-    .badge-num { background: #e8f0fb; color: #1a2f4e; border-radius: 20px; padding: .2rem .6rem; font-size: .8rem; font-weight: 700; }
-    .badge-hours { background: #fef3c7; color: #92400e; border-radius: 20px; padding: .2rem .65rem; font-size: .8rem; font-weight: 700; }
-    .filter-card { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
-    .stat-pill { background: rgba(255,255,255,.18); border-radius: 20px; padding: .3rem 1rem; font-size: .85rem; display: inline-flex; align-items: center; gap: .4rem; margin-top: .8rem; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}שעות לפי חלקה{% endblock %}
+{% block nav_field %}active{% endblock %}
 
-<nav class="top-nav">
-  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <div>
-    <a href="/"><i class="bi bi-house"></i> ראשי</a>
-    <a href="/client-report"><i class="bi bi-person-fill"></i> דוח לקוח</a>
-    <a href="/summary"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
-    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-  </div>
-</nav>
+{% block extra_style %}
+  .badge-num   { background:#e8f0fb; color:#1a2f4e; border-radius:20px; padding:.2rem .6rem; font-size:.8rem; font-weight:700; }
+  .badge-hours { background:#fef3c7; color:#92400e; border-radius:20px; padding:.2rem .65rem; font-size:.8rem; font-weight:700; }
+  .filter-card { background:#fff; border-radius:14px; box-shadow:0 1px 5px rgba(0,0,0,.06); padding:1rem 1.5rem; margin-bottom:1.5rem; }
+  .stat-pill   { background:rgba(255,255,255,.18); border-radius:20px; padding:.3rem 1rem; font-size:.85rem; display:inline-flex; align-items:center; gap:.4rem; margin-top:.8rem; }
+{% endblock %}
 
+{% block content %}
 <div class="hero">
   <div class="container-lg">
     <h1><i class="bi bi-map-fill"></i> שעות עבודה לפי חלקה וגידול</h1>
@@ -50,21 +25,12 @@
   <div class="alert alert-danger">שגיאה: {{ error }}</div>
   {% endif %}
 
-  <!-- Print button -->
   <div class="d-flex justify-content-end mb-2">
-    <a id="printBtn" href="/field-report/print" target="_blank"
-       class="btn btn-outline-secondary btn-sm">
+    <a id="printBtn" href="/field-report/print" target="_blank" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-printer"></i> הדפס / PDF
     </a>
   </div>
-  <script>
-    document.getElementById('printBtn').addEventListener('click', function() {
-      const params = new URLSearchParams(window.location.search);
-      this.href = '/field-report/print?' + params.toString();
-    });
-  </script>
 
-  <!-- Filters -->
   <div class="filter-card">
     <form method="get" class="row g-2 align-items-end">
       <div class="col-12 col-sm-4">
@@ -72,9 +38,7 @@
         <input type="text" name="client" class="form-control form-control-sm"
                placeholder="חיפוש לפי לקוח" value="{{ client_filter }}"
                list="clientListF" autocomplete="off" />
-        <datalist id="clientListF">
-          {% for c in client_list %}<option value="{{ c }}">{% endfor %}
-        </datalist>
+        <datalist id="clientListF">{% for c in client_list %}<option value="{{ c }}">{% endfor %}</datalist>
       </div>
       <div class="col-6 col-sm-3">
         <label class="form-label small fw-semibold mb-1">מתאריך</label>
@@ -100,7 +64,6 @@
   </div>
   {% else %}
 
-  <!-- Charts row -->
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-6">
       <div class="card-section" style="height:300px;">
@@ -116,7 +79,6 @@
     </div>
   </div>
 
-  <!-- Pivot table: field × crop -->
   <div class="card-section mb-4">
     <h5 class="fw-bold mb-3">טבלת שעות — חלקה × גידול</h5>
     <div class="table-responsive">
@@ -135,11 +97,8 @@
             {% for c in crops %}
             <td class="text-center">
               {% set v = row.get(c, 0) | float %}
-              {% if v > 0 %}
-              <span class="badge-hours">{{ "%.1f"|format(v) }}</span>
-              {% else %}
-              <span class="text-muted">—</span>
-              {% endif %}
+              {% if v > 0 %}<span class="badge-hours">{{ "%.1f"|format(v) }}</span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             {% endfor %}
             <td class="text-center fw-bold" style="background:#f0f5ff;">
@@ -153,102 +112,81 @@
   </div>
 
   <div class="row g-3">
-    <!-- Field totals -->
     <div class="col-12 col-md-6">
       <div class="card-section">
         <h5 class="fw-bold mb-3">סה"כ לפי חלקה</h5>
-        <div class="table-responsive">
-          <table class="table table-hover align-middle" style="font-size:.875rem;">
-            <thead>
-              <tr>
-                <th>חלקה</th>
-                <th class="text-center">עבודות</th>
-                <th class="text-center">שעות</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in field_totals %}
-              <tr>
-                <td><strong>{{ row['שם חלקה'] }}</strong></td>
-                <td class="text-center"><span class="badge-num">{{ row['עבודות'] }}</span></td>
-                <td class="text-center"><span class="badge-hours">{{ "%.1f"|format(row['שעות'] | float) }}</span></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <table class="table table-hover align-middle" style="font-size:.875rem;">
+          <thead><tr><th>חלקה</th><th class="text-center">עבודות</th><th class="text-center">שעות</th></tr></thead>
+          <tbody>
+            {% for row in field_totals %}
+            <tr>
+              <td><strong>{{ row['שם חלקה'] }}</strong></td>
+              <td class="text-center"><span class="badge-num">{{ row['עבודות'] }}</span></td>
+              <td class="text-center"><span class="badge-hours">{{ "%.1f"|format(row['שעות'] | float) }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
-
-    <!-- Crop totals -->
     <div class="col-12 col-md-6">
       <div class="card-section">
         <h5 class="fw-bold mb-3">סה"כ לפי גידול</h5>
-        <div class="table-responsive">
-          <table class="table table-hover align-middle" style="font-size:.875rem;">
-            <thead>
-              <tr>
-                <th>גידול</th>
-                <th class="text-center">עבודות</th>
-                <th class="text-center">שעות</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in crop_totals %}
-              <tr>
-                <td><strong>{{ row['גידול'] }}</strong></td>
-                <td class="text-center"><span class="badge-num">{{ row['עבודות'] }}</span></td>
-                <td class="text-center"><span class="badge-hours">{{ "%.1f"|format(row['שעות'] | float) }}</span></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <table class="table table-hover align-middle" style="font-size:.875rem;">
+          <thead><tr><th>גידול</th><th class="text-center">עבודות</th><th class="text-center">שעות</th></tr></thead>
+          <tbody>
+            {% for row in crop_totals %}
+            <tr>
+              <td><strong>{{ row['גידול'] }}</strong></td>
+              <td class="text-center"><span class="badge-num">{{ row['עבודות'] }}</span></td>
+              <td class="text-center"><span class="badge-hours">{{ "%.1f"|format(row['שעות'] | float) }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
 
   {% endif %}
 </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
+  document.getElementById('printBtn').addEventListener('click', function() {
+    const params = new URLSearchParams(window.location.search);
+    this.href = '/field-report/print?' + params.toString();
+  });
+
   const fieldTotals = {{ field_totals | tojson }};
   const cropTotals  = {{ crop_totals  | tojson }};
-
   const FIELD_COLORS = ['#3578c8','#22c55e','#f59e0b','#a855f7','#ef4444','#14b8a6','#f97316','#6366f1'];
   const CROP_COLORS  = ['#1e8c4e','#d97706','#2563eb','#7c3aed','#dc2626','#0891b2','#ea580c','#4f46e5'];
 
   if (fieldTotals.length) {
     new Chart(document.getElementById('fieldChart'), {
-      type: 'bar',
-      data: {
-        labels: fieldTotals.map(r => r['שם חלקה']),
-        datasets: [{ label:'שעות', data: fieldTotals.map(r => parseFloat(r['שעות']) || 0),
-          backgroundColor: fieldTotals.map((_, i) => FIELD_COLORS[i % FIELD_COLORS.length] + 'cc'),
-          borderColor: fieldTotals.map((_, i) => FIELD_COLORS[i % FIELD_COLORS.length]),
-          borderWidth: 1, borderRadius: 5 }]
-      },
-      options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{display:false} },
-        scales:{ x:{ grid:{color:'#e2e8f0'} }, y:{ticks:{font:{size:11}}} } }
+      type:'bar',
+      data:{ labels:fieldTotals.map(r=>r['שם חלקה']),
+        datasets:[{ label:'שעות', data:fieldTotals.map(r=>parseFloat(r['שעות'])||0),
+          backgroundColor:fieldTotals.map((_,i)=>FIELD_COLORS[i%FIELD_COLORS.length]+'cc'),
+          borderColor:fieldTotals.map((_,i)=>FIELD_COLORS[i%FIELD_COLORS.length]),
+          borderWidth:1, borderRadius:5 }] },
+      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}}, scales:{x:{grid:{color:'#e2e8f0'}},y:{ticks:{font:{size:11}}}} }
     });
   }
 
   if (cropTotals.length) {
     new Chart(document.getElementById('cropChart'), {
-      type: 'doughnut',
-      data: {
-        labels: cropTotals.map(r => r['גידול']),
-        datasets: [{ data: cropTotals.map(r => parseFloat(r['שעות']) || 0),
-          backgroundColor: cropTotals.map((_, i) => CROP_COLORS[i % CROP_COLORS.length]),
-          borderWidth: 2 }]
-      },
-      options: { responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{ position:'right', labels:{ font:{size:11}, boxWidth:14 } } } }
+      type:'doughnut',
+      data:{ labels:cropTotals.map(r=>r['גידול']),
+        datasets:[{ data:cropTotals.map(r=>parseFloat(r['שעות'])||0),
+          backgroundColor:cropTotals.map((_,i)=>CROP_COLORS[i%CROP_COLORS.length]), borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{position:'right',labels:{font:{size:11},boxWidth:14}}} }
     });
   }
 </script>
-</body>
-</html>
+{% endblock %}

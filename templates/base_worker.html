@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <title>{% block title %}פורטל עובד{% endblock %} — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    :root { --green:#1e4d2b; --green-mid:#2d7a42; --green-lt:#dcfce7; --surface:#f0fdf4; }
+    body { background: var(--surface); font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; color: #1e293b; }
+
+    .top-nav {
+      background: var(--green);
+      padding: .7rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+      position: sticky; top: 0; z-index: 1030;
+    }
+    .top-nav .brand       { color: #fff; font-weight: 700; font-size: 1.05rem; text-decoration: none; }
+    .top-nav .worker-badge { background: rgba(255,255,255,.15); color: #fff; border-radius: 20px; padding: .2rem .8rem; font-size: .82rem; }
+    .top-nav .nav-btn     { background: none; border: none; color: rgba(255,255,255,.75); font-size: .85rem; cursor: pointer; padding: 0; }
+    .top-nav .nav-btn:hover { color: #fff; }
+
+    .hero {
+      background: linear-gradient(135deg, var(--green) 0%, var(--green-mid) 100%);
+      color: #fff; padding: 1.8rem 1.5rem 1.4rem;
+    }
+    .hero h1 { font-size: 1.4rem; font-weight: 700; margin: 0; }
+    .hero p  { font-size: .85rem; opacity: .8; margin: .3rem 0 0; }
+    .stat-pill { background: rgba(255,255,255,.18); border-radius: 20px; padding: .3rem 1rem; font-size: .85rem; display: inline-flex; align-items: center; gap: .4rem; margin-top: .8rem; }
+
+    .form-card    { background: #fff; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 1.6rem; }
+    .form-card h5 { font-size: 1rem; font-weight: 700; color: var(--green); margin-bottom: 1rem; }
+    .form-label   { font-size: .85rem; font-weight: 600; color: #475569; }
+    .btn-add      { background: var(--green); border: none; font-weight: 600; border-radius: 9px; }
+    .btn-add:hover { background: var(--green-mid); }
+
+    .history-card    { background: #fff; border-radius: 16px; box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 1.4rem; }
+    .history-card h5 { font-size: 1rem; font-weight: 700; color: var(--green); margin-bottom: 1rem; }
+
+    .work-item { border-right: 3px solid var(--green-mid); padding: .6rem .9rem; margin-bottom: .6rem; background: var(--surface); border-radius: 0 8px 8px 0; }
+    .work-item .wi-client { font-weight: 700; font-size: .95rem; color: var(--green); }
+    .work-item .wi-meta   { font-size: .8rem; color: #64748b; margin-top: .15rem; }
+
+    .badge-task  { padding: .18rem .55rem; border-radius: 20px; font-size: .72rem; font-weight: 600; }
+    .badge-חריש  { background:#fef3c7; color:#92400e; }
+    .badge-ריסוס { background:#dcfce7; color:#166534; }
+    .badge-קציר  { background:#dbeafe; color:#1e40af; }
+    .badge-דיסוק { background:#ede9fe; color:#5b21b6; }
+    .badge-אחר   { background:#f1f5f9; color:#475569; }
+
+    .empty-hint   { text-align: center; color: #94a3b8; padding: 2.5rem 1rem; }
+    .empty-hint i { font-size: 2.5rem; opacity: .35; }
+
+    {% block extra_style %}{% endblock %}
+  </style>
+</head>
+<body>
+
+<nav class="top-nav">
+  <a class="brand" href="/worker">🌾 גד"ש — פורטל עובד</a>
+  <div class="d-flex align-items-center gap-3">
+    <span class="worker-badge">👤 {{ worker_name }}</span>
+    <button class="nav-btn" data-bs-toggle="modal" data-bs-target="#changePassModal">
+      <i class="bi bi-key"></i> סיסמה
+    </button>
+    <a class="nav-btn text-decoration-none" href="/worker/logout">
+      <i class="bi bi-box-arrow-right"></i> יציאה
+    </a>
+  </div>
+</nav>
+
+<!-- Change password modal -->
+<div class="modal fade" id="changePassModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:360px;">
+    <div class="modal-content">
+      <div class="modal-header" style="background:var(--green);color:#fff;">
+        <h6 class="modal-title fw-bold">🔐 שינוי סיסמת עובד</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="/worker/change-password">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">סיסמה נוכחית</label>
+            <input type="password" name="old_password" class="form-control form-control-sm" required />
+          </div>
+          <div class="mb-3">
+            <label class="form-label small fw-semibold">סיסמה חדשה</label>
+            <input type="password" name="new_password" class="form-control form-control-sm" minlength="4" required />
+          </div>
+          <div class="mb-2">
+            <label class="form-label small fw-semibold">אימות סיסמה</label>
+            <input type="password" name="confirm_password" class="form-control form-control-sm" minlength="4" required />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">ביטול</button>
+          <button type="submit" class="btn btn-sm text-white fw-semibold px-3" style="background:var(--green);">שמור</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% block content %}{% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  // Inject CSRF into any form missing it
+  const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  document.querySelectorAll('form').forEach(form => {
+    if (!form.querySelector('[name="csrf_token"]')) {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = CSRF;
+      form.appendChild(inp);
+    }
+  });
+  // Auto-dismiss success alerts
+  document.querySelectorAll('.alert-success').forEach(el => {
+    setTimeout(() => bootstrap.Alert.getOrCreateInstance(el).close(), 3500);
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

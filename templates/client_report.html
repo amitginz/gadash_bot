@@ -1,46 +1,21 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>דוח לקוח — גד"ש</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
-    .top-nav { background: #1a2f4e; padding: .7rem 1.5rem; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
-    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav a { color: rgba(255,255,255,.75); text-decoration: none; font-size: .85rem; margin-inline-start: 1.2rem; }
-    .top-nav a:hover { color: #fff; }
-    .hero { background: linear-gradient(135deg, #1a2f4e 0%, #2a4a72 60%, #3a6fa8 100%); color: #fff; padding: 2rem 1.5rem 1.5rem; }
-    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0; }
-    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.5rem; }
-    .table thead th { background: #1a2f4e; color: #fff; font-weight: 600; border: none; }
-    .table td, .table th { vertical-align: middle; }
-    .badge-num   { background: #e8f0fb; color: #1a2f4e; border-radius: 20px; padding: .2rem .6rem; font-size: .8rem; font-weight: 700; }
-    .badge-hours { background: #fef3c7; color: #92400e; border-radius: 20px; padding: .2rem .65rem; font-size: .8rem; font-weight: 700; }
-    .stat-pill { background: rgba(255,255,255,.18); border-radius: 20px; padding: .3rem 1rem; font-size: .85rem; display: inline-flex; align-items: center; gap: .4rem; margin-top: .8rem; margin-inline-end: .4rem; }
-    .filter-card { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
-    .badge-חריש  { background:#fef3c7; color:#92400e; }
-    .badge-ריסוס { background:#dcfce7; color:#166534; }
-    .badge-קציר  { background:#dbeafe; color:#1e40af; }
-    .badge-דיסוק { background:#ede9fe; color:#5b21b6; }
-    .badge-אחר   { background:#f1f5f9; color:#475569; }
-    .badge-task  { border-radius: 20px; padding: .15rem .55rem; font-size: .72rem; font-weight: 600; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}דוח לקוח{% endblock %}
+{% block nav_client %}active{% endblock %}
 
-<nav class="top-nav">
-  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <div>
-    <a href="/"><i class="bi bi-house"></i> ראשי</a>
-    <a href="/field-report"><i class="bi bi-map-fill"></i> שעות לפי חלקה</a>
-    <a href="/summary"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
-    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-  </div>
-</nav>
+{% block extra_style %}
+  .badge-num   { background:#e8f0fb; color:#1a2f4e; border-radius:20px; padding:.2rem .6rem; font-size:.8rem; font-weight:700; }
+  .badge-hours { background:#fef3c7; color:#92400e; border-radius:20px; padding:.2rem .65rem; font-size:.8rem; font-weight:700; }
+  .stat-pill   { background:rgba(255,255,255,.18); border-radius:20px; padding:.3rem 1rem; font-size:.85rem; display:inline-flex; align-items:center; gap:.4rem; margin-top:.8rem; margin-inline-end:.4rem; }
+  .filter-card { background:#fff; border-radius:14px; box-shadow:0 1px 5px rgba(0,0,0,.06); padding:1rem 1.5rem; margin-bottom:1.5rem; }
+  .badge-חריש  { background:#fef3c7; color:#92400e; }
+  .badge-ריסוס { background:#dcfce7; color:#166534; }
+  .badge-קציר  { background:#dbeafe; color:#1e40af; }
+  .badge-דיסוק { background:#ede9fe; color:#5b21b6; }
+  .badge-אחר   { background:#f1f5f9; color:#475569; }
+  .badge-task  { border-radius:20px; padding:.15rem .55rem; font-size:.72rem; font-weight:600; }
+{% endblock %}
 
+{% block content %}
 <div class="hero">
   <div class="container-lg">
     {% if client_name %}
@@ -62,7 +37,6 @@
   <div class="alert alert-danger">שגיאה: {{ error }}</div>
   {% endif %}
 
-  <!-- Search / filter -->
   <div class="filter-card">
     <form method="get" class="row g-2 align-items-end">
       <div class="col-12 col-sm-4">
@@ -70,9 +44,7 @@
         <input type="text" name="client" class="form-control form-control-sm"
                placeholder="הכנס שם לקוח" value="{{ client_name }}"
                list="clientListC" autocomplete="off" />
-        <datalist id="clientListC">
-          {% for c in client_list %}<option value="{{ c }}">{% endfor %}
-        </datalist>
+        <datalist id="clientListC">{% for c in client_list %}<option value="{{ c }}">{% endfor %}</datalist>
       </div>
       <div class="col-6 col-sm-3">
         <label class="form-label small fw-semibold mb-1">מתאריך</label>
@@ -105,7 +77,6 @@
 
   {% else %}
 
-  <!-- Charts -->
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-4">
       <div class="card-section" style="height:280px;">
@@ -133,7 +104,6 @@
     </div>
   </div>
 
-  <!-- Summary tables -->
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-6">
       <div class="card-section">
@@ -169,7 +139,6 @@
     </div>
   </div>
 
-  <!-- All entries table -->
   <div class="card-section">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h5 class="fw-bold mb-0">כל העבודות ({{ records|length }})</h5>
@@ -182,14 +151,9 @@
       <table class="table table-hover align-middle" style="font-size:.85rem;">
         <thead>
           <tr>
-            <th>תאריך</th>
-            <th>עבודה</th>
-            <th>חלקה</th>
-            <th>גידול</th>
-            <th class="text-center">כמות</th>
-            <th class="text-center">שעות</th>
-            <th>מפעיל</th>
-            <th>הערות</th>
+            <th>תאריך</th><th>עבודה</th><th>חלקה</th><th>גידול</th>
+            <th class="text-center">כמות</th><th class="text-center">שעות</th>
+            <th>מפעיל</th><th>הערות</th>
           </tr>
         </thead>
         <tbody>
@@ -201,9 +165,7 @@
             <td>{{ row['גידול'] }}</td>
             <td class="text-center">{{ row['כמות'] }}</td>
             <td class="text-center">
-              {% if row['שעות'] %}
-              <span class="badge-hours">{{ row['שעות'] }}</span>
-              {% else %}—{% endif %}
+              {% if row['שעות'] %}<span class="badge-hours">{{ row['שעות'] }}</span>{% else %}—{% endif %}
             </td>
             <td>{{ row['מפעיל'] }}</td>
             <td class="text-muted small">{{ row['הערות'] }}</td>
@@ -216,82 +178,67 @@
 
   {% endif %}
 </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
   const fieldHours   = {{ field_hours   | tojson }};
   const cropHours    = {{ crop_hours    | tojson }};
   const taskCounts   = {{ task_counts   | tojson }};
   const monthlyHours = {{ monthly_hours | tojson }};
-
-  const TASK_COLORS = {'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'};
+  const TASK_COLORS  = {'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'};
   const PALETTE = ['#3578c8','#22c55e','#f59e0b','#a855f7','#ef4444','#14b8a6','#f97316','#6366f1'];
 
   if (fieldHours.length) {
     new Chart(document.getElementById('fieldChart'), {
-      type: 'bar',
-      data: {
-        labels: fieldHours.map(r => r.label || 'לא צוין'),
-        datasets: [{ data: fieldHours.map(r => parseFloat(r.hours)||0),
-          backgroundColor: PALETTE.map(c => c+'cc'), borderColor: PALETTE,
-          borderWidth:1, borderRadius:5 }]
-      },
-      options: { indexAxis:'y', responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{display:false}},
-        scales:{x:{grid:{color:'#e2e8f0'}},y:{ticks:{font:{size:10}}}} }
+      type:'bar',
+      data:{ labels:fieldHours.map(r=>r.label||'לא צוין'),
+        datasets:[{ data:fieldHours.map(r=>parseFloat(r.hours)||0),
+          backgroundColor:PALETTE.map(c=>c+'cc'), borderColor:PALETTE, borderWidth:1, borderRadius:5 }] },
+      options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}}, scales:{x:{grid:{color:'#e2e8f0'}},y:{ticks:{font:{size:10}}}} }
     });
   }
-
   if (cropHours.length) {
     new Chart(document.getElementById('cropChart'), {
-      type: 'doughnut',
-      data: {
-        labels: cropHours.map(r => r.label || 'לא צוין'),
-        datasets: [{ data: cropHours.map(r => parseFloat(r.hours)||0),
-          backgroundColor: PALETTE, borderWidth:2 }]
-      },
-      options: { responsive:true, maintainAspectRatio:false,
+      type:'doughnut',
+      data:{ labels:cropHours.map(r=>r.label||'לא צוין'),
+        datasets:[{ data:cropHours.map(r=>parseFloat(r.hours)||0),
+          backgroundColor:PALETTE, borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false,
         plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:12}}} }
     });
   }
-
   if (taskCounts.length) {
     new Chart(document.getElementById('taskChart'), {
-      type: 'doughnut',
-      data: {
-        labels: taskCounts.map(r => r.label || r['עבודה'] || ''),
-        datasets: [{ data: taskCounts.map(r => r.cnt || r['count'] || 0),
-          backgroundColor: taskCounts.map(r => TASK_COLORS[r.label || r['עבודה']] || '#94a3b8'),
-          borderWidth:2 }]
-      },
-      options: { responsive:true, maintainAspectRatio:false,
+      type:'doughnut',
+      data:{ labels:taskCounts.map(r=>r.label||r['עבודה']||''),
+        datasets:[{ data:taskCounts.map(r=>r.cnt||r['count']||0),
+          backgroundColor:taskCounts.map(r=>TASK_COLORS[r.label||r['עבודה']]||'#94a3b8'), borderWidth:2 }] },
+      options:{ responsive:true, maintainAspectRatio:false,
         plugins:{legend:{position:'right',labels:{font:{size:10},boxWidth:12}}} }
     });
   }
-
   if (monthlyHours.length) {
     new Chart(document.getElementById('monthChart'), {
-      type: 'bar',
-      data: {
-        labels: monthlyHours.map(r => r.month),
-        datasets: [
-          { label:'שעות', data: monthlyHours.map(r => parseFloat(r.hours)||0),
+      type:'bar',
+      data:{ labels:monthlyHours.map(r=>r.month),
+        datasets:[
+          { label:'שעות', data:monthlyHours.map(r=>parseFloat(r.hours)||0),
             backgroundColor:'#3578c8cc', borderColor:'#1a2f4e', borderWidth:1, borderRadius:4, yAxisID:'y' },
-          { label:'עבודות', data: monthlyHours.map(r => parseInt(r.entries)||0),
+          { label:'עבודות', data:monthlyHours.map(r=>parseInt(r.entries)||0),
             type:'line', borderColor:'#f59e0b', backgroundColor:'#f59e0b33',
             borderWidth:2, pointRadius:4, fill:true, tension:.3, yAxisID:'y1' }
-        ]
-      },
-      options: { responsive:true, maintainAspectRatio:false,
+        ] },
+      options:{ responsive:true, maintainAspectRatio:false,
         plugins:{legend:{labels:{font:{size:11},boxWidth:14}}},
         scales:{
           y: {position:'right',ticks:{font:{size:10}},grid:{color:'#e2e8f0'},title:{display:true,text:'שעות',font:{size:10}}},
-          y1:{position:'left',ticks:{font:{size:10}},grid:{display:false},title:{display:true,text:'עבודות',font:{size:10}}}
+          y1:{position:'left', ticks:{font:{size:10}},grid:{display:false},title:{display:true,text:'עבודות',font:{size:10}}}
         }
       }
     });
   }
 </script>
-</body>
-</html>
+{% endblock %}

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="csrf-token" content="{{ csrf_token() }}" />
+  <title>{% block title %}גד"ש{% endblock %} — גד"ש</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
+  <style>
+    :root { --navy:#1a2f4e; --navy-mid:#2a4a72; --navy-light:#3a6fa8; }
+    body { background: #f5f7fa; font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; }
+
+    /* ── Navbar ── */
+    .top-nav {
+      background: var(--navy);
+      padding: .7rem 1.5rem;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+      position: sticky; top: 0; z-index: 1030;
+    }
+    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
+    .top-nav .menu-btn {
+      background: none; border: none; color: #fff; font-size: 1.4rem;
+      cursor: pointer; padding: .2rem .4rem; line-height: 1;
+    }
+
+    /* ── Sidebar offcanvas ── */
+    .offcanvas           { max-width: 270px; background: #0f2540; color: #fff; }
+    .offcanvas-header    { background: var(--navy); border-bottom: 1px solid rgba(255,255,255,.1); }
+    .offcanvas-header .offcanvas-title { font-weight: 700; color: #fff; }
+    .offcanvas-header .btn-close       { filter: invert(1); }
+    .sidebar-section {
+      font-size: .7rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: rgba(255,255,255,.4);
+      padding: 1rem 1.2rem .3rem;
+    }
+    .sidebar-link {
+      display: flex; align-items: center; gap: .7rem;
+      padding: .6rem 1.2rem; color: rgba(255,255,255,.8);
+      text-decoration: none; font-size: .9rem; transition: background .15s, color .15s;
+    }
+    .sidebar-link:hover           { background: rgba(255,255,255,.08); color: #fff; }
+    .sidebar-link.active          { background: rgba(255,255,255,.12); color: #fff; font-weight: 600; }
+    .sidebar-link i               { width: 1.1rem; text-align: center; opacity: .75; font-size: 1rem; }
+    .sidebar-divider              { border-color: rgba(255,255,255,.1); margin: .3rem 0; }
+
+    /* ── Hero ── */
+    .hero { background: linear-gradient(135deg, var(--navy) 0%, var(--navy-mid) 60%, var(--navy-light) 100%); color: #fff; padding: 2rem 1.5rem 1.5rem; }
+    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0; }
+
+    /* ── Cards / tables ── */
+    .card-section { background: #fff; border-radius: 14px; box-shadow: 0 1px 5px rgba(0,0,0,.06); padding: 1.5rem; }
+    .table thead th { background: var(--navy); color: #fff; font-weight: 600; border: none; }
+    .table td, .table th { vertical-align: middle; }
+
+    {% block extra_style %}{% endblock %}
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="top-nav">
+  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
+  <button class="menu-btn" data-bs-toggle="offcanvas" data-bs-target="#sideMenu" aria-label="תפריט">
+    <i class="bi bi-list"></i>
+  </button>
+</nav>
+
+<!-- Sidebar -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="sideMenu">
+  <div class="offcanvas-header">
+    <span class="offcanvas-title">🌾 תפריט ניווט</span>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body p-0">
+
+    <div class="sidebar-section">עבודות</div>
+    <a href="/"              class="sidebar-link {% block nav_home %}{% endblock %}"><i class="bi bi-house-fill"></i> דף ראשי</a>
+    <a href="/add"           class="sidebar-link {% block nav_add %}{% endblock %}"><i class="bi bi-plus-circle-fill"></i> הוספת רשומה</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">דוחות</div>
+    <a href="/summary"       class="sidebar-link {% block nav_summary %}{% endblock %}"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
+    <a href="/field-report"  class="sidebar-link {% block nav_field %}{% endblock %}"><i class="bi bi-map-fill"></i> שעות לפי חלקה</a>
+    <a href="/client-report" class="sidebar-link {% block nav_client %}{% endblock %}"><i class="bi bi-person-bar-chart"></i> דוח לקוח</a>
+    <a href="/print"         class="sidebar-link" target="_blank"><i class="bi bi-printer-fill"></i> הדפסה</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">ניהול נתונים</div>
+    <a href="/export"        class="sidebar-link"><i class="bi bi-file-earmark-excel-fill"></i> ייצוא Excel</a>
+    <a href="/export/csv"    class="sidebar-link"><i class="bi bi-filetype-csv"></i> ייצוא CSV</a>
+    <a href="/import"        class="sidebar-link {% block nav_import %}{% endblock %}"><i class="bi bi-upload"></i> ייבוא Excel</a>
+    <a href="/audit"         class="sidebar-link {% block nav_audit %}{% endblock %}"><i class="bi bi-clock-history"></i> יומן פעילות</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">הגדרות</div>
+    <a href="/change-password" class="sidebar-link {% block nav_passwd %}{% endblock %}"><i class="bi bi-key-fill"></i> שינוי סיסמה</a>
+    <a href="/logout"          class="sidebar-link"><i class="bi bi-box-arrow-right"></i> יציאה</a>
+
+  </div>
+</div>
+
+{% block content %}{% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

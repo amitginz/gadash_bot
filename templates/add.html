@@ -1,37 +1,20 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>הוספת רשומה — גד"ש</title>
-  <meta name="csrf-token" content="{{ csrf_token() }}" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    body { background: #f4f6f9; font-family: 'Segoe UI', sans-serif; }
-    .page-header { background: linear-gradient(135deg, #1e3a5f, #2d6a9f); color: white; padding: 2rem 0 1.5rem; margin-bottom: 2rem; }
-    .page-header h1 { font-size: 1.5rem; font-weight: 700; margin: 0; }
-    .form-card { background: white; border-radius: 14px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 2rem; max-width: 640px; margin: 0 auto; }
-    .form-label { font-weight: 600; font-size: 0.9rem; color: #374151; }
-    .btn-primary { background: #1e3a5f; border-color: #1e3a5f; }
-    .btn-primary:hover { background: #2d6a9f; border-color: #2d6a9f; }
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}הוספת רשומה{% endblock %}
+{% block nav_add %}active{% endblock %}
 
-<nav class="navbar navbar-dark" style="background:#1e3a5f;">
-  <div class="container">
-    <a class="navbar-brand" href="/" style="font-weight:700;">🌾 גד"ש — ניהול עבודות</a>
-  </div>
-</nav>
+{% block extra_style %}
+  .form-card { background:#fff; border-radius:14px; box-shadow:0 2px 8px rgba(0,0,0,.08); padding:2rem; max-width:640px; margin:2rem auto; }
+  .form-label { font-weight:600; font-size:.9rem; color:#374151; }
+  .btn-primary { background:#1a2f4e; border-color:#1a2f4e; }
+  .btn-primary:hover { background:#2a4a72; border-color:#2a4a72; }
+{% endblock %}
 
-<div class="page-header">
-  <div class="container">
-    <h1>➕ הוספת רשומה חדשה</h1>
-  </div>
+{% block content %}
+<div class="hero">
+  <div class="container-lg"><h1>➕ הוספת רשומה חדשה</h1></div>
 </div>
 
-<div class="container pb-5">
+<div class="container-lg pb-5">
   <div class="form-card">
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -50,15 +33,14 @@
     {% endif %}
 
     <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <div class="row g-3">
         <div class="col-12">
           <label class="form-label">שם לקוח *</label>
           <input type="text" class="form-control" name="שם לקוח" required placeholder="הכנס שם לקוח"
                  list="clientList" autocomplete="off" value="{{ prefill.get('שם לקוח', '') }}" />
           <datalist id="clientList">
-            {% for c in client_list %}
-            <option value="{{ c }}"></option>
-            {% endfor %}
+            {% for c in client_list %}<option value="{{ c }}"></option>{% endfor %}
           </datalist>
         </div>
         <div class="col-sm-6">
@@ -78,17 +60,13 @@
           <label class="form-label">שם חלקה</label>
           <input type="text" class="form-control" name="שם חלקה" placeholder="לדוג׳ חלקה ב׳"
                  value="{{ prefill.get('שם חלקה', '') }}" list="fieldList" autocomplete="off" />
-          <datalist id="fieldList">
-            {% for f in field_list %}<option value="{{ f }}">{% endfor %}
-          </datalist>
+          <datalist id="fieldList">{% for f in field_list %}<option value="{{ f }}">{% endfor %}</datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">גידול</label>
           <input type="text" class="form-control" name="גידול" placeholder="לדוג׳ חיטה, תירס"
                  value="{{ prefill.get('גידול', '') }}" list="cropList" autocomplete="off" />
-          <datalist id="cropList">
-            {% for c in crop_list %}<option value="{{ c }}">{% endfor %}
-          </datalist>
+          <datalist id="cropList">{% for c in crop_list %}<option value="{{ c }}">{% endfor %}</datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">כמות</label>
@@ -103,24 +81,19 @@
           <label class="form-label">מפעיל</label>
           <input type="text" class="form-control" name="מפעיל" placeholder="שם המפעיל"
                  value="{{ prefill.get('מפעיל', '') }}" list="operatorList" autocomplete="off" />
-          <datalist id="operatorList">
-            {% for o in operator_list %}<option value="{{ o }}">{% endfor %}
-          </datalist>
+          <datalist id="operatorList">{% for o in operator_list %}<option value="{{ o }}">{% endfor %}</datalist>
         </div>
         <div class="col-sm-6">
           <label class="form-label">כלי</label>
           <input type="text" class="form-control" name="כלי" placeholder="לדוג׳ טרקטור"
                  value="{{ prefill.get('כלי', '') }}" list="toolList" autocomplete="off" />
-          <datalist id="toolList">
-            {% for t in tool_list %}<option value="{{ t }}">{% endfor %}
-          </datalist>
+          <datalist id="toolList">{% for t in tool_list %}<option value="{{ t }}">{% endfor %}</datalist>
         </div>
         <div class="col-12">
           <label class="form-label">הערות</label>
           <textarea class="form-control" name="הערות" rows="3" placeholder="הערות נוספות אם יש">{{ prefill.get('הערות', '') }}</textarea>
         </div>
       </div>
-
       <div class="d-flex justify-content-between mt-4">
         <a href="/" class="btn btn-outline-secondary">← חזור</a>
         <button type="submit" class="btn btn-primary px-4">שמור רשומה</button>
@@ -128,7 +101,4 @@
     </form>
   </div>
 </div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+{% endblock %}

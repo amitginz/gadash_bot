@@ -31,14 +31,28 @@
       box-shadow: 0 2px 8px rgba(0,0,0,.25);
     }
     .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav .nav-links a {
-      color: rgba(255,255,255,.75);
-      text-decoration: none;
-      font-size: .85rem;
-      margin-inline-start: 1.2rem;
-      transition: color .15s;
+    .top-nav .menu-btn {
+      background: none; border: none; color: #fff; font-size: 1.4rem;
+      cursor: pointer; padding: .2rem .4rem; line-height: 1;
     }
-    .top-nav .nav-links a:hover { color: #fff; }
+    /* ── Sidebar offcanvas ── */
+    .offcanvas { max-width: 270px; background: #0f2540; color: #fff; }
+    .offcanvas-header { background: var(--navy); border-bottom: 1px solid rgba(255,255,255,.1); }
+    .offcanvas-header .offcanvas-title { font-weight: 700; color: #fff; }
+    .offcanvas-header .btn-close { filter: invert(1); }
+    .sidebar-section { font-size: .7rem; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: .08em; color: rgba(255,255,255,.4);
+                        padding: 1rem 1.2rem .3rem; }
+    .sidebar-link {
+      display: flex; align-items: center; gap: .7rem;
+      padding: .6rem 1.2rem; color: rgba(255,255,255,.8);
+      text-decoration: none; font-size: .9rem; transition: background .15s, color .15s;
+      border-radius: 0;
+    }
+    .sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
+    .sidebar-link.active { background: rgba(255,255,255,.12); color: #fff; font-weight: 600; }
+    .sidebar-link i { width: 1.1rem; text-align: center; opacity: .75; font-size: 1rem; }
+    .sidebar-divider { border-color: rgba(255,255,255,.1); margin: .3rem 0; }
 
     /* ── Hero header ── */
     .hero {
@@ -188,19 +202,44 @@
 <!-- Navbar -->
 <nav class="top-nav">
   <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <div class="nav-links">
-    <a href="/add"><i class="bi bi-plus-circle"></i> הוספה</a>
-    <a href="/export"><i class="bi bi-file-earmark-excel"></i> ייצוא</a>
-    <a href="/import"><i class="bi bi-upload"></i> ייבוא</a>
-    <a href="/summary"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
-    <a href="/field-report"><i class="bi bi-map-fill"></i> שעות לפי חלקה</a>
-    <a href="/client-report"><i class="bi bi-person-fill"></i> דוח לקוח</a>
-    <a href="/audit"><i class="bi bi-clock-history"></i> לוג</a>
-    <a href="/worker"><i class="bi bi-person-fill"></i> פורטל עובד</a>
-    <a href="/change-password"><i class="bi bi-key"></i> סיסמה</a>
-    <a href="/logout"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-  </div>
+  <button class="menu-btn" data-bs-toggle="offcanvas" data-bs-target="#sideMenu" aria-label="תפריט">
+    <i class="bi bi-list"></i>
+  </button>
 </nav>
+
+<!-- Sidebar offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="sideMenu">
+  <div class="offcanvas-header">
+    <span class="offcanvas-title">🌾 תפריט ניווט</span>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body p-0">
+
+    <div class="sidebar-section">עבודות</div>
+    <a href="/" class="sidebar-link active"><i class="bi bi-house-fill"></i> דף ראשי</a>
+    <a href="/add" class="sidebar-link"><i class="bi bi-plus-circle-fill"></i> הוספת רשומה</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">דוחות</div>
+    <a href="/summary" class="sidebar-link"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
+    <a href="/field-report" class="sidebar-link"><i class="bi bi-map-fill"></i> שעות לפי חלקה</a>
+    <a href="/client-report" class="sidebar-link"><i class="bi bi-person-bar-chart"></i> דוח לקוח</a>
+    <a href="/print" class="sidebar-link" target="_blank"><i class="bi bi-printer-fill"></i> הדפסה</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">ניהול נתונים</div>
+    <a href="/export" class="sidebar-link"><i class="bi bi-file-earmark-excel-fill"></i> ייצוא Excel</a>
+    <a href="/export/csv" class="sidebar-link"><i class="bi bi-filetype-csv"></i> ייצוא CSV</a>
+    <a href="/import" class="sidebar-link"><i class="bi bi-upload"></i> ייבוא Excel</a>
+    <a href="/audit" class="sidebar-link"><i class="bi bi-clock-history"></i> יומן פעילות</a>
+
+    <hr class="sidebar-divider">
+    <div class="sidebar-section">הגדרות</div>
+    <a href="/change-password" class="sidebar-link"><i class="bi bi-key-fill"></i> שינוי סיסמה</a>
+    <a href="/logout" class="sidebar-link"><i class="bi bi-box-arrow-right"></i> יציאה</a>
+
+  </div>
+</div>
 
 <!-- Hero -->
 <div class="hero">
@@ -286,55 +325,18 @@
   </div>
   {% endif %}
 
-  <!-- Filters -->
-  <div class="filter-card mt-3">
-    <form method="get" id="filterForm">
-      <div class="row g-2 align-items-end">
-        <div class="col-12 col-sm-4">
-          <label class="form-label">חיפוש לקוח</label>
-          <div class="search-wrap">
-            <input type="text" name="client" id="clientSearch" class="form-control search-input"
-                   placeholder="שם לקוח…" value="{{ client_filter }}" autocomplete="off">
-            <i class="bi bi-search"></i>
-          </div>
-        </div>
-        <div class="col-6 col-sm-2">
-          <label class="form-label">מתאריך</label>
-          <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
-        </div>
-        <div class="col-6 col-sm-2">
-          <label class="form-label">עד תאריך</label>
-          <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
-        </div>
-        <div class="col-6 col-sm-2">
-          <label class="form-label">סוג עבודה</label>
-          <select name="task" class="form-select">
-            <option value="">הכל</option>
-            {% for t in task_options %}
-            <option value="{{ t }}" {% if task_filter == t %}selected{% endif %}>{{ t }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-12 col-sm-2 d-flex gap-2">
-          <button type="submit" class="btn btn-filter btn-primary flex-fill">
-            <i class="bi bi-funnel-fill"></i> סנן
-          </button>
-          <a href="/" class="btn btn-reset btn-outline-secondary flex-fill">
-            <i class="bi bi-x-lg"></i>
-          </a>
-        </div>
-      </div>
-    </form>
-  </div>
-
-  <!-- Global search (client-side, all columns) -->
+  <!-- Search -->
   <div class="filter-card mt-3 py-2 px-3">
-    <div class="d-flex align-items-center gap-2">
-      <i class="bi bi-search text-muted"></i>
-      <input type="text" id="globalSearch" class="form-control form-control-sm"
-             placeholder="חיפוש מהיר בכל השדות…" autocomplete="off" style="max-width:340px;">
-      <span id="globalSearchCount" class="text-muted small" style="white-space:nowrap;"></span>
-    </div>
+    <form method="get" id="filterForm" class="d-flex align-items-center gap-2">
+      <i class="bi bi-search text-muted flex-shrink-0"></i>
+      <input type="text" name="q" id="globalSearch" class="form-control form-control-sm"
+             placeholder="חיפוש בכל השדות — לקוח, תאריך, עבודה, חלקה…"
+             value="{{ q_filter }}" autocomplete="off">
+      {% if q_filter %}
+      <a href="/" class="btn btn-sm btn-outline-secondary flex-shrink-0"><i class="bi bi-x-lg"></i></a>
+      {% endif %}
+      <span id="globalSearchCount" class="text-muted small flex-shrink-0" style="white-space:nowrap;"></span>
+    </form>
   </div>
 
   <!-- Action bar -->
@@ -355,29 +357,16 @@
       {% endif %}
     </div>
     <div class="d-flex gap-2 flex-wrap">
-      {% set export_params = [] %}
-      {% if client_filter %}{% set _ = export_params.append("client=" ~ client_filter) %}{% endif %}
-      {% if date_from %}{% set _ = export_params.append("date_from=" ~ date_from) %}{% endif %}
-      {% if date_to %}{% set _ = export_params.append("date_to=" ~ date_to) %}{% endif %}
-      {% if task_filter %}{% set _ = export_params.append("task=" ~ task_filter) %}{% endif %}
-      {% if export_params %}
-      <a href="/export?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
+      {% set qp = ("?q=" ~ q_filter) if q_filter else "" %}
+      <a href="/export{{ qp }}" class="btn btn-outline-success btn-sm px-3">
         <i class="bi bi-file-earmark-excel"></i> Excel
       </a>
-      <a href="/export/csv?{{ export_params | join('&') }}" class="btn btn-outline-success btn-sm px-3">
+      <a href="/export/csv{{ qp }}" class="btn btn-outline-success btn-sm px-3">
         <i class="bi bi-filetype-csv"></i> CSV
       </a>
-      <a href="/print?{{ export_params | join('&') }}" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
+      <a href="/print{{ qp }}" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
         <i class="bi bi-printer"></i> הדפס
       </a>
-      {% else %}
-      <a href="/export/csv" class="btn btn-outline-success btn-sm px-3">
-        <i class="bi bi-filetype-csv"></i> CSV
-      </a>
-      <a href="/print" target="_blank" class="btn btn-outline-secondary btn-sm px-3">
-        <i class="bi bi-printer"></i> הדפס
-      </a>
-      {% endif %}
       <button type="submit" form="bulkDeleteForm" class="btn btn-outline-danger btn-sm px-3" id="bulkDeleteBtn"
               style="display:none;" onclick="return confirm('למחוק את הרשומות שנבחרו?')">
         <i class="bi bi-trash"></i> מחק נבחרים (<span id="selectedCount">0</span>)
@@ -406,11 +395,13 @@
             <th data-col="1">תאריך<span class="sort-icon"></span></th>
             <th data-col="2">עבודה<span class="sort-icon"></span></th>
             <th data-col="3">שם חלקה<span class="sort-icon"></span></th>
-            <th data-col="4">כמות<span class="sort-icon"></span></th>
-            <th data-col="5">כלי<span class="sort-icon"></span></th>
-            <th data-col="6">מפעיל<span class="sort-icon"></span></th>
-            <th data-col="7">הערות<span class="sort-icon"></span></th>
-            <th data-col="8">מזין<span class="sort-icon"></span></th>
+            <th data-col="4">גידול<span class="sort-icon"></span></th>
+            <th data-col="5">כמות<span class="sort-icon"></span></th>
+            <th data-col="6">שעות<span class="sort-icon"></span></th>
+            <th data-col="7">כלי<span class="sort-icon"></span></th>
+            <th data-col="8">מפעיל<span class="sort-icon"></span></th>
+            <th data-col="9">הערות<span class="sort-icon"></span></th>
+            <th data-col="10">מזין<span class="sort-icon"></span></th>
             <th class="text-center" style="width:110px">פעולות</th>
           </tr>
         </thead>
@@ -424,7 +415,9 @@
               <span class="badge-task badge-{{ row['עבודה'] }}">{{ row['עבודה'] }}</span>
             </td>
             <td class="editable" data-field="שם חלקה">{{ row['שם חלקה'] }}</td>
+            <td class="editable" data-field="גידול">{{ row.get('גידול', '') }}</td>
             <td class="editable" data-field="כמות">{{ row['כמות'] }}</td>
+            <td class="editable" data-field="שעות">{{ row.get('שעות', '') }}</td>
             <td class="editable" data-field="כלי">{{ row['כלי'] }}</td>
             <td class="editable" data-field="מפעיל">{{ row['מפעיל'] }}</td>
             <td class="editable text-muted" data-field="הערות" style="max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
@@ -470,7 +463,7 @@
         <span class="badge-task badge-{{ row['עבודה'] }}">{{ row['עבודה'] }}</span>
         &nbsp;{{ row['תאריך'] }}
       </div>
-      {% if row['שם חלקה'] %}<div class="mc-meta">📍 {{ row['שם חלקה'] }} — {{ row['כמות'] }}</div>{% endif %}
+      {% if row['שם חלקה'] %}<div class="mc-meta">📍 {{ row['שם חלקה'] }}{% if row.get('גידול') %} ({{ row['גידול'] }}){% endif %}{% if row['כמות'] %} — {{ row['כמות'] }}{% endif %}{% if row.get('שעות') %} | ⏱ {{ row['שעות'] }} ש'{% endif %}</div>{% endif %}
       {% if row['מפעיל'] %}<div class="mc-meta">👤 {{ row['מפעיל'] }} | 🚜 {{ row['כלי'] }}</div>{% endif %}
       {% if row['הערות'] %}<div class="mc-meta text-muted">💬 {{ row['הערות'] }}</div>{% endif %}
       <div class="mc-actions">
@@ -559,8 +552,20 @@
               </datalist>
             </div>
             <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">גידול</label>
+              <input type="text" name="גידול" class="form-control form-control-sm"
+                     list="qaCropList" autocomplete="off" placeholder="חיטה, תירס…">
+              <datalist id="qaCropList">
+                {% for c in crop_list %}<option value="{{ c }}">{% endfor %}
+              </datalist>
+            </div>
+            <div class="col-6">
               <label class="form-label fw-semibold" style="font-size:.85rem;">כמות</label>
               <input type="text" name="כמות" class="form-control form-control-sm" placeholder="30 דונם">
+            </div>
+            <div class="col-6">
+              <label class="form-label fw-semibold" style="font-size:.85rem;">שעות עבודה</label>
+              <input type="number" name="שעות" class="form-control form-control-sm" placeholder="3.5" step="0.5" min="0">
             </div>
             <div class="col-6">
               <label class="form-label fw-semibold" style="font-size:.85rem;">כלי</label>
