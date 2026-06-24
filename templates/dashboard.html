@@ -1,0 +1,598 @@
+{% extends "base.html" %}
+{% block title %}דשבורד ניתוח{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+
+{% block extra_style %}
+<style>
+  /* ── KPI grid ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  @media (max-width: 900px)  { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px)  { .kpi-grid { grid-template-columns: 1fr 1fr; gap: .6rem; } }
+
+  .kpi-card {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.07);
+    padding: 1.2rem 1.4rem;
+    position: relative;
+    overflow: hidden;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .kpi-card:hover { transform: translateY(-2px); box-shadow: 0 5px 22px rgba(0,0,0,.11); }
+  .kpi-card::before {
+    content: "";
+    position: absolute; top: 0; right: 0;
+    width: 4px; height: 100%;
+    border-radius: 0 14px 14px 0;
+  }
+  .kpi-card.blue::before   { background: #3578c8; }
+  .kpi-card.green::before  { background: #1e8c4e; }
+  .kpi-card.amber::before  { background: #d97706; }
+  .kpi-card.purple::before { background: #7c3aed; }
+
+  .kpi-icon  {
+    position: absolute; top: 1rem; left: 1rem;
+    font-size: 2rem; opacity: .1; line-height: 1;
+  }
+  .kpi-label { font-size: .68rem; color: #64748b; font-weight: 700;
+               letter-spacing: .05em; text-transform: uppercase; margin-bottom: .3rem; }
+  .kpi-value { font-size: 2rem; font-weight: 800; color: #0f2540; line-height: 1.1; margin-bottom: .35rem; }
+  .kpi-delta { font-size: .76rem; display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+  .delta-up   { color: #1e8c4e; font-weight: 600; }
+  .delta-down { color: #dc2626; font-weight: 600; }
+  .delta-flat { color: #94a3b8; }
+
+  /* ── Chart grid ── */
+  .chart-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.2rem;
+    margin-bottom: 1.2rem;
+  }
+  @media (max-width: 768px) { .chart-grid-2 { grid-template-columns: 1fr; } }
+
+  .chart-card {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 1px 6px rgba(0,0,0,.07);
+    padding: 1.2rem 1.4rem;
+  }
+  .chart-title {
+    font-size: .73rem; font-weight: 700; color: #475569;
+    text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 1rem;
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .chart-wrap {
+    position: relative;
+    height: 240px;
+  }
+  .chart-wrap.tall { height: 290px; }
+
+  /* ── Loading overlay ── */
+  .chart-overlay {
+    position: absolute; inset: 0;
+    background: rgba(255,255,255,.85);
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 10px; z-index: 5;
+  }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid #e2e8f0;
+    border-top-color: #3578c8;
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Toolbar ── */
+  .dash-toolbar {
+    display: flex; align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap; gap: .75rem;
+    margin-bottom: 1.5rem;
+  }
+  .range-btns { display: flex; gap: .35rem; flex-wrap: wrap; }
+  .range-btn {
+    padding: .28rem .75rem; font-size: .79rem;
+    border-radius: 20px; border: 1.5px solid #cbd5e1;
+    background: #fff; color: #475569;
+    cursor: pointer; font-weight: 500;
+    transition: all .15s;
+  }
+  .range-btn:hover  { border-color: #3578c8; color: #3578c8; }
+  .range-btn.active { background: #1a2f4e; border-color: #1a2f4e; color: #fff; }
+
+  .live-badge {
+    display: flex; align-items: center; gap: .5rem;
+    font-size: .79rem; color: #64748b;
+  }
+  .live-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #1e8c4e;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:.4; transform:scale(1.35); }
+  }
+  .btn-refresh {
+    padding: .2rem .55rem; font-size: .82rem;
+    border-radius: 8px; border: 1.5px solid #cbd5e1;
+    background: #fff; cursor: pointer; color: #475569;
+    transition: all .15s;
+  }
+  .btn-refresh:hover { background: #f1f5f9; border-color: #94a3b8; }
+
+  /* ── Empty state ── */
+  .empty-chart {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; color: #94a3b8; gap: .4rem;
+  }
+  .empty-chart i { font-size: 2rem; opacity: .4; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Hero -->
+<div class="hero">
+  <div class="container-lg" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8rem;">
+    <div>
+      <h1>📊 דשבורד ניתוח נתונים</h1>
+      <div style="font-size:.84rem;opacity:.7;">ניתוח עבודות שדה בזמן אמת</div>
+    </div>
+    <a href="/" class="btn btn-outline-light btn-sm px-3">
+      <i class="bi bi-table"></i> טבלת עבודות
+    </a>
+  </div>
+</div>
+
+<div class="container-lg py-4">
+
+  <!-- Toolbar -->
+  <div class="dash-toolbar">
+    <div class="range-btns" id="rangeBtns">
+      <button class="range-btn" data-days="7">7 ימים</button>
+      <button class="range-btn active" data-days="30">30 יום</button>
+      <button class="range-btn" data-days="90">90 יום</button>
+      <button class="range-btn" data-days="365">שנה</button>
+      <button class="range-btn" data-days="0">הכל</button>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      <span>רענון בעוד <strong id="countdown">60</strong>ש׳</span>
+      <button class="btn-refresh" onclick="doFetch()" title="רענן עכשיו">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card blue">
+      <div class="kpi-icon">📋</div>
+      <div class="kpi-label">עבודות החודש</div>
+      <div class="kpi-value" id="kpi-month">—</div>
+      <div class="kpi-delta" id="kpi-month-d"></div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-icon">⏱</div>
+      <div class="kpi-label">שעות החודש</div>
+      <div class="kpi-value" id="kpi-hours">—</div>
+      <div class="kpi-delta" id="kpi-hours-d"></div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-icon">👤</div>
+      <div class="kpi-label">לקוחות פעילים</div>
+      <div class="kpi-value" id="kpi-clients">—</div>
+      <div class="kpi-delta" id="kpi-clients-d"></div>
+    </div>
+    <div class="kpi-card purple">
+      <div class="kpi-icon">🚜</div>
+      <div class="kpi-label">ממוצע שעות / עבודה</div>
+      <div class="kpi-value" id="kpi-avg">—</div>
+      <div class="kpi-delta" id="kpi-total-d"></div>
+    </div>
+  </div>
+
+  <!-- Row 1: Daily trend + Task doughnut -->
+  <div class="chart-grid-2">
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-graph-up-arrow"></i> טרנד יומי — עבודות ושעות</div>
+      <div class="chart-wrap">
+        <div class="chart-overlay" id="ov-daily"><div class="spinner"></div></div>
+        <canvas id="dailyChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-pie-chart-fill"></i> פיזור לפי סוג עבודה</div>
+      <div class="chart-wrap">
+        <div class="chart-overlay" id="ov-task"><div class="spinner"></div></div>
+        <canvas id="taskChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 2: Top clients + Top fields -->
+  <div class="chart-grid-2">
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-people-fill"></i> לקוחות מובילים</div>
+      <div class="chart-wrap tall">
+        <div class="chart-overlay" id="ov-clients"><div class="spinner"></div></div>
+        <canvas id="clientChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-layers-fill"></i> חלקות לפי שעות עבודה</div>
+      <div class="chart-wrap tall">
+        <div class="chart-overlay" id="ov-fields"><div class="spinner"></div></div>
+        <canvas id="fieldChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: Monthly trend + Crop distribution -->
+  <div class="chart-grid-2">
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-calendar3"></i> טרנד חודשי — 12 חודשים</div>
+      <div class="chart-wrap">
+        <div class="chart-overlay" id="ov-monthly"><div class="spinner"></div></div>
+        <canvas id="monthlyChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><i class="bi bi-flower1"></i> שעות לפי גידול</div>
+      <div class="chart-wrap">
+        <div class="chart-overlay" id="ov-crop"><div class="spinner"></div></div>
+        <canvas id="cropChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="text-center text-muted small mt-1 mb-3" id="lastUpdated"></div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+// ── Palette ────────────────────────────────────────────────────────────────
+const P = ['#3578c8','#1e8c4e','#d97706','#7c3aed','#0e7490','#e11d48','#64748b','#0f766e'];
+
+Chart.defaults.font.family = "'Segoe UI','Arial Hebrew',sans-serif";
+Chart.defaults.color = '#475569';
+
+// ── State ──────────────────────────────────────────────────────────────────
+let activeDays = 30;
+let cdSec      = 60;
+let charts     = {};
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function buildQS() {
+  if (!activeDays) return '';
+  const now  = new Date();
+  const from = new Date(); from.setDate(now.getDate() - activeDays);
+  const fmt  = d => d.toISOString().slice(0,10);
+  return `?from=${fmt(from)}&to=${fmt(now)}`;
+}
+
+function overlay(id, show) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = show ? 'flex' : 'none';
+}
+
+function mkChart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  const c = document.getElementById(id);
+  if (!c) return;
+  charts[id] = new Chart(c, cfg);
+}
+
+function countUp(elId, end, dec=0, ms=550) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const t0 = performance.now();
+  (function tick(now) {
+    const p = Math.min((now-t0)/ms, 1);
+    const e = 1 - Math.pow(1-p, 3);
+    el.textContent = (end * e).toFixed(dec);
+    if (p < 1) requestAnimationFrame(tick);
+  })(performance.now());
+}
+
+function delta(elId, cur, prev) {
+  const el = document.getElementById(elId);
+  if (!el || prev == null || prev === 0) { if(el) el.innerHTML=''; return; }
+  const d   = cur - prev;
+  const pct = Math.abs(Math.round(d / prev * 100));
+  const cls = d > 0 ? 'delta-up' : d < 0 ? 'delta-down' : 'delta-flat';
+  const ico = d > 0 ? '▲' : d < 0 ? '▼' : '—';
+  el.innerHTML = d !== 0
+    ? `<span class="${cls}">${ico} ${pct}%</span><span class="text-muted ms-1" style="font-size:.72rem">לעומת חודש קודם</span>`
+    : `<span class="delta-flat">ללא שינוי</span>`;
+}
+
+// ── Main fetch ─────────────────────────────────────────────────────────────
+async function doFetch() {
+  cdSec = 60;
+  ['ov-daily','ov-task','ov-clients','ov-fields','ov-monthly','ov-crop']
+    .forEach(id => overlay(id, true));
+
+  try {
+    const r = await fetch('/api/dashboard' + buildQS());
+    const d = await r.json();
+    if (d.error) { console.error(d.error); return; }
+
+    renderKPIs(d.kpis);
+    renderDaily(d.daily_trend);
+    renderTask(d.task_dist);
+    renderClients(d.top_clients);
+    renderFields(d.top_fields);
+    renderMonthly(d.monthly_trend);
+    renderCrop(d.crop_hours);
+
+    const lu = document.getElementById('lastUpdated');
+    if (lu) lu.textContent = `עודכן: ${d.updated_at}`;
+  } catch(e) {
+    console.error('dashboard error', e);
+  } finally {
+    ['ov-daily','ov-task','ov-clients','ov-fields','ov-monthly','ov-crop']
+      .forEach(id => overlay(id, false));
+  }
+}
+
+// ── KPIs ───────────────────────────────────────────────────────────────────
+function renderKPIs(k) {
+  countUp('kpi-month',   k.this_month,        0);
+  countUp('kpi-hours',   k.hours_this_month,  1);
+  countUp('kpi-clients', k.active_clients,    0);
+  countUp('kpi-avg',     k.avg_hours,         1);
+
+  delta('kpi-month-d',   k.this_month,        k.prev_month);
+  delta('kpi-hours-d',   k.hours_this_month,  k.hours_prev_month);
+  delta('kpi-clients-d', k.active_clients,    k.active_clients_prev);
+
+  const tot = document.getElementById('kpi-total-d');
+  if (tot) tot.innerHTML =
+    `<span class="text-muted" style="font-size:.72rem">סה"כ ${k.total} עבודות | ${k.total_hours}ש׳</span>`;
+}
+
+// ── Daily trend (Bar + Line combo) ─────────────────────────────────────────
+function renderDaily(data) {
+  if (!data?.length) return;
+  const lbl = data.map(d => d.date.slice(5));
+  const ent = data.map(d => d.entries);
+  const hrs = data.map(d => d.hours);
+
+  mkChart('dailyChart', {
+    type: 'bar',
+    data: {
+      labels: lbl,
+      datasets: [
+        {
+          type: 'bar', label: 'עבודות', data: ent,
+          backgroundColor: 'rgba(53,120,200,.72)',
+          borderRadius: 4, yAxisID: 'y',
+        },
+        {
+          type: 'line', label: 'שעות', data: hrs,
+          borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,.1)',
+          borderWidth: 2.5, pointRadius: 2.5, pointHoverRadius: 5,
+          fill: true, tension: 0.38, yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { boxWidth: 11, font: { size: 10 } } } },
+      scales: {
+        x:  { grid: { display: false }, ticks: { maxTicksLimit: 12, font: { size: 9 } } },
+        y:  { position: 'right', title: { display: true, text: 'עבודות', font: { size: 9 } }, grid: { color: '#f1f5f9' } },
+        y2: { position: 'left',  title: { display: true, text: 'שעות',   font: { size: 9 } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// ── Task doughnut ───────────────────────────────────────────────────────────
+function renderTask(dist) {
+  if (!dist || !Object.keys(dist).length) return;
+  const lbl = Object.keys(dist);
+  const val = Object.values(dist);
+  const tot = val.reduce((a,b) => a+b, 0);
+
+  mkChart('taskChart', {
+    type: 'doughnut',
+    data: { labels: lbl, datasets: [{ data: val, backgroundColor: P, borderWidth: 2, borderColor: '#fff', hoverOffset: 10 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '64%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 11, font: { size: 10 }, padding: 8 } },
+        tooltip: { callbacks: { label: c => ` ${c.label}: ${c.parsed} (${Math.round(c.parsed/tot*100)}%)` } },
+      },
+    },
+    plugins: [{
+      id: 'center',
+      afterDraw(ch) {
+        const { ctx, chartArea: { left, top, width, height } } = ch;
+        const cx = left + width/2, cy = top + height/2;
+        ctx.save();
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = 'bold 22px "Segoe UI"'; ctx.fillStyle = '#0f2540';
+        ctx.fillText(tot, cx, cy - 7);
+        ctx.font = '10px "Segoe UI"'; ctx.fillStyle = '#94a3b8';
+        ctx.fillText('עבודות', cx, cy + 11);
+        ctx.restore();
+      },
+    }],
+  });
+}
+
+// ── Top clients (horizontal bar) ────────────────────────────────────────────
+function renderClients(data) {
+  if (!data?.length) return;
+  const rev   = [...data].reverse();
+  const lbl   = rev.map(d => d.name);
+  const cnt   = rev.map(d => d.count);
+
+  mkChart('clientChart', {
+    type: 'bar',
+    data: {
+      labels: lbl,
+      datasets: [{
+        label: 'עבודות', data: cnt,
+        backgroundColor: rev.map((_,i) => `rgba(53,120,200,${.45+.055*i})`),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterBody: items => {
+              const idx  = data.length - 1 - items[0].dataIndex;
+              return `שעות: ${data[idx]?.hours ?? 0}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: '#f1f5f9' }, ticks: { font: { size: 9 } } },
+        y: { ticks: { font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+// ── Top fields (horizontal bar) ─────────────────────────────────────────────
+function renderFields(data) {
+  if (!data?.length) return;
+  const rev = [...data].reverse();
+  const lbl = rev.map(d => d.name);
+  const hrs = rev.map(d => d.hours);
+
+  mkChart('fieldChart', {
+    type: 'bar',
+    data: {
+      labels: lbl,
+      datasets: [{
+        label: 'שעות', data: hrs,
+        backgroundColor: rev.map((_,i) => `rgba(30,140,78,${.42+.058*i})`),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            afterBody: items => {
+              const idx = data.length - 1 - items[0].dataIndex;
+              return `עבודות: ${data[idx]?.entries ?? 0}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: '#f1f5f9' }, ticks: { font: { size: 9 } } },
+        y: { ticks: { font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+// ── Monthly trend (line + area) ─────────────────────────────────────────────
+function renderMonthly(data) {
+  if (!data?.length) return;
+  const lbl = data.map(d => d.month);
+  const ent = data.map(d => d.entries);
+  const hrs = data.map(d => d.hours);
+
+  mkChart('monthlyChart', {
+    type: 'line',
+    data: {
+      labels: lbl,
+      datasets: [
+        {
+          label: 'עבודות', data: ent,
+          borderColor: '#3578c8', backgroundColor: 'rgba(53,120,200,.1)',
+          fill: true, tension: 0.38, pointRadius: 4, pointHoverRadius: 6,
+          yAxisID: 'y',
+        },
+        {
+          label: 'שעות', data: hrs,
+          borderColor: '#d97706', backgroundColor: 'rgba(217,119,6,.07)',
+          fill: true, tension: 0.38, pointRadius: 4, pointHoverRadius: 6,
+          yAxisID: 'y2',
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'top', labels: { boxWidth: 11, font: { size: 10 } } } },
+      scales: {
+        x:  { grid: { display: false }, ticks: { font: { size: 9 } } },
+        y:  { position: 'right', title: { display: true, text: 'עבודות', font: { size: 9 } }, grid: { color: '#f1f5f9' } },
+        y2: { position: 'left',  title: { display: true, text: 'שעות',   font: { size: 9 } }, grid: { display: false } },
+      },
+    },
+  });
+}
+
+// ── Crop doughnut ───────────────────────────────────────────────────────────
+function renderCrop(data) {
+  if (!data?.length) return;
+  const lbl = data.map(d => d.name);
+  const val = data.map(d => d.hours);
+
+  mkChart('cropChart', {
+    type: 'doughnut',
+    data: { labels: lbl, datasets: [{ data: val, backgroundColor: P, borderWidth: 2, borderColor: '#fff', hoverOffset: 10 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      cutout: '58%',
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 11, font: { size: 10 }, padding: 8 } },
+        tooltip: { callbacks: { label: c => ` ${c.label}: ${c.parsed}ש׳` } },
+      },
+    },
+  });
+}
+
+// ── Range buttons ──────────────────────────────────────────────────────────
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeDays = +btn.dataset.days;
+    doFetch();
+  });
+});
+
+// ── Countdown ──────────────────────────────────────────────────────────────
+setInterval(() => {
+  cdSec--;
+  const el = document.getElementById('countdown');
+  if (el) el.textContent = cdSec;
+  if (cdSec <= 0) { doFetch(); cdSec = 60; }
+}, 1000);
+
+// ── Init ───────────────────────────────────────────────────────────────────
+doFetch();
+</script>
+{% endblock %}

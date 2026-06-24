@@ -189,6 +189,59 @@ def _get_settings_sheet():
             return None
 
 
+def _get_fieldcoords_sheet():
+    """Opens (or creates) the FieldCoords worksheet."""
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("FieldCoords")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("FieldCoords", rows=200, cols=3)
+                ws.append_row(["שם חלקה", "lat", "lng"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _load_field_coords() -> dict:
+    """Returns {field_name: {lat: float, lng: float}}."""
+    try:
+        ws = _get_fieldcoords_sheet()
+        if not ws:
+            return {}
+        rows = ws.get_all_values()
+        coords = {}
+        for row in rows[1:]:
+            if len(row) >= 3 and row[0] and row[1] and row[2]:
+                try:
+                    coords[row[0]] = {"lat": float(row[1]), "lng": float(row[2])}
+                except ValueError:
+                    pass
+        return coords
+    except Exception:
+        return {}
+
+
+def _save_field_coord(name: str, lat: float, lng: float):
+    """Upsert lat/lng for a field. Overwrites existing row if found."""
+    try:
+        ws = _get_fieldcoords_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == name:
+                ws.update([[name, lat, lng]], f"A{i}:C{i}")
+                return
+        ws.append_row([name, lat, lng])
+    except Exception as e:
+        print(f"[FieldCoords] save error: {e}")
+
+
 def _load_passwords():
     """Read persisted passwords from the Settings sheet (falls back to env vars)."""
     global _current_password, _worker_password
@@ -1539,6 +1592,285 @@ def field_report_print():
                                generated=datetime.now().strftime("%d/%m/%Y %H:%M"))
     except Exception as e:
         return f"שגיאה: {e}"
+
+
+# ── AI Summary ────────────────────────────────────────────────────────────────
+
+@app.route("/api/ai-summary", methods=["POST"])
+@login_required
+def api_ai_summary():
+    try:
+        df = load_data_from_gsheet()
+        if df.empty:
+            return jsonify({"summary": "אין נתונים לניתוח."})
+
+        df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
+        df["_תאריך"] = pd.to_datetime(df["תאריך"], errors="coerce")
+
+        now = datetime.now()
+        cur_m, cur_y = now.month, now.year
+        prev_m = cur_m - 1 if cur_m > 1 else 12
+        prev_y = cur_y if cur_m > 1 else cur_y - 1
+
+        this_m = df[(df["_תאריך"].dt.month == cur_m) & (df["_תאריך"].dt.year == cur_y)]
+        last_m = df[(df["_תאריך"].dt.month == prev_m) & (df["_תאריך"].dt.year == prev_y)]
+
+        def _mode(series):
+            m = series.dropna().replace("", None).dropna().mode()
+            return m.iloc[0] if not m.empty else "—"
+
+        stats = {
+            "month_label":      now.strftime("%m/%Y"),
+            "jobs":             int(len(this_m)),
+            "hours":            round(float(this_m["_שעות"].sum()), 1),
+            "prev_jobs":        int(len(last_m)),
+            "prev_hours":       round(float(last_m["_שעות"].sum()), 1),
+            "top_client":       _mode(this_m["שם לקוח"]),
+            "top_task":         _mode(this_m["עבודה"]),
+            "top_operator":     _mode(this_m["מפעיל"]),
+            "active_clients":   int(this_m["שם לקוח"].nunique()),
+            "active_fields":    int(this_m["שם חלקה"].nunique()),
+        }
+
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+
+        if gemini_key:
+            prompt = f"""אתה מנהל חקלאי מנוסה. כתוב סיכום חודשי מקצועי בעברית (5-6 משפטים בלבד) בהתבסס על:
+
+חודש {stats['month_label']}:
+- עבודות: {stats['jobs']} (חודש קודם: {stats['prev_jobs']})
+- שעות: {stats['hours']} (חודש קודם: {stats['prev_hours']})
+- לקוח מוביל: {stats['top_client']}
+- עבודה שכיחה: {stats['top_task']}
+- מפעיל מוביל: {stats['top_operator']}
+- לקוחות פעילים: {stats['active_clients']}
+- חלקות פעילות: {stats['active_fields']}
+
+כלול: השוואה לחודש הקודם, נקודת חוזק אחת, נקודת חולשה אחת, והמלצה מעשית אחת. כתוב בגוף ראשון רבים ("בחנו", "ראינו")."""
+            try:
+                from google import genai as _genai
+                _client = _genai.Client(api_key=gemini_key)
+                r = _client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                summary = r.text
+            except Exception as ai_err:
+                summary = f"שגיאת AI: {ai_err}"
+        else:
+            trend     = "עלייה" if stats["jobs"] >= stats["prev_jobs"] else "ירידה"
+            diff_jobs = abs(stats["jobs"] - stats["prev_jobs"])
+            diff_hrs  = round(abs(stats["hours"] - stats["prev_hours"]), 1)
+            rec = ("כדאי לשקול הגדלת כוח אדם לעמידה בקצב הגובר."
+                   if stats["jobs"] > stats["prev_jobs"]
+                   else "מומלץ לפנות ללקוחות שלא טופלו החודש ולתזמן עבודות נוספות.")
+            summary = (
+                f"בחודש {stats['month_label']} בוצעו **{stats['jobs']} עבודות** — "
+                f"{trend} של {diff_jobs} עבודות לעומת החודש הקודם ({stats['prev_jobs']}). "
+                f"סך שעות העבודה עמד על **{stats['hours']:.0f} שעות** "
+                f"({'גידול' if stats['hours'] >= stats['prev_hours'] else 'ירידה'} של {diff_hrs} שעות).\n\n"
+                f"הלקוח המוביל החודש היה **{stats['top_client']}**, "
+                f"עבודת ה**{stats['top_task']}** הייתה הנפוצה ביותר, "
+                f"והמפעיל הפעיל ביותר — **{stats['top_operator']}**. "
+                f"עסקנו עם **{stats['active_clients']} לקוחות פעילים** ב-**{stats['active_fields']} חלקות**.\n\n"
+                f"**המלצה:** {rec}\n\n"
+                f"_⚠️ מצב הדגמה — חבר מפתח Gemini לסיכום AI מלא_"
+            )
+
+        return jsonify({"summary": summary, "stats": stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Field map ─────────────────────────────────────────────────────────────────
+
+@app.route("/fields-map")
+@login_required
+def fields_map():
+    return render_template("fields_map.html")
+
+
+@app.route("/api/fields")
+@login_required
+def api_fields():
+    try:
+        df = load_data_from_gsheet()
+        coords = _load_field_coords()
+        if df.empty:
+            return jsonify([])
+
+        df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
+        df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
+        df = df[df["שם חלקה"] != ""]
+
+        result = []
+        for field_name, grp in df.groupby("שם חלקה"):
+            crops = grp["גידול"].dropna().replace("", None).dropna()
+            clients = grp["שם לקוח"].dropna()
+            dates = grp["תאריך"].dropna()
+            result.append({
+                "name":      field_name,
+                "hours":     round(float(grp["_שעות"].sum()), 1),
+                "jobs":      int(len(grp)),
+                "crop":      crops.mode().iloc[0] if not crops.empty else "",
+                "client":    clients.mode().iloc[0] if not clients.empty else "",
+                "last_date": dates.max() if not dates.empty else "",
+                "lat":       coords[field_name]["lat"] if field_name in coords else None,
+                "lng":       coords[field_name]["lng"] if field_name in coords else None,
+            })
+
+        result.sort(key=lambda x: x["hours"], reverse=True)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fields/coords", methods=["POST"])
+@login_required
+def api_fields_coords():
+    data = request.get_json(silent=True)
+    if not data or "name" not in data or "lat" not in data or "lng" not in data:
+        return jsonify({"error": "missing fields"}), 400
+    try:
+        _save_field_coord(str(data["name"]), float(data["lat"]), float(data["lng"]))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Dashboard API ─────────────────────────────────────────────────────────────
+
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    try:
+        df  = load_data_from_gsheet()
+        cls = sorted(df["שם לקוח"].dropna().unique().tolist()) if not df.empty else []
+    except Exception:
+        cls = []
+    return render_template("dashboard.html", client_list=cls)
+
+
+@app.route("/api/dashboard")
+@login_required
+def api_dashboard():
+    try:
+        df = load_data_from_gsheet()
+
+        empty_resp = {
+            "kpis": {"total": 0, "this_month": 0, "prev_month": 0,
+                     "hours_this_month": 0.0, "hours_prev_month": 0.0,
+                     "active_clients": 0, "active_clients_prev": 0,
+                     "total_hours": 0.0, "avg_hours": 0.0},
+            "daily_trend": [], "task_dist": {}, "top_clients": [],
+            "top_fields": [], "crop_hours": [], "monthly_trend": [],
+            "updated_at": datetime.now().strftime("%H:%M:%S"),
+        }
+        if df.empty:
+            return jsonify(empty_resp)
+
+        date_from = request.args.get("from", "")
+        date_to   = request.args.get("to",   "")
+
+        # Month-over-month KPIs always computed on full dataset
+        now          = datetime.now()
+        cur_m, cur_y = now.month, now.year
+        prev_m       = cur_m - 1 if cur_m > 1 else 12
+        prev_y       = cur_y if cur_m > 1 else cur_y - 1
+        month_prefix = now.strftime("%Y-%m")
+        prev_prefix  = f"{prev_y:04d}-{prev_m:02d}"
+
+        this_m = df[df["תאריך"].str.startswith(month_prefix, na=False)].copy()
+        last_m = df[df["תאריך"].str.startswith(prev_prefix,  na=False)].copy()
+        this_m["_h"] = pd.to_numeric(this_m["שעות"], errors="coerce").fillna(0)
+        last_m["_h"] = pd.to_numeric(last_m["שעות"], errors="coerce").fillna(0)
+
+        # Apply date range filter for chart data
+        cdf = df.copy()
+        if date_from:
+            cdf = cdf[cdf["תאריך"] >= date_from]
+        if date_to:
+            cdf = cdf[cdf["תאריך"] <= date_to]
+
+        cdf["_h"] = pd.to_numeric(cdf["שעות"], errors="coerce").fillna(0)
+        cdf["_d"] = pd.to_datetime(cdf["תאריך"], errors="coerce")
+
+        kpis = {
+            "total":               len(cdf),
+            "this_month":          len(this_m),
+            "prev_month":          len(last_m),
+            "hours_this_month":    round(float(this_m["_h"].sum()), 1),
+            "hours_prev_month":    round(float(last_m["_h"].sum()), 1),
+            "active_clients":      int(this_m["שם לקוח"].nunique()),
+            "active_clients_prev": int(last_m["שם לקוח"].nunique()),
+            "total_hours":         round(float(cdf["_h"].sum()), 1),
+            "avg_hours": round(float(cdf.loc[cdf["_h"] > 0, "_h"].mean()), 1)
+                         if (cdf["_h"] > 0).any() else 0.0,
+        }
+
+        # Daily trend (last 60 days of filtered range)
+        cdf_v = cdf.dropna(subset=["_d"]).copy()
+        daily = (
+            cdf_v.groupby(cdf_v["_d"].dt.strftime("%Y-%m-%d"))
+            .agg(entries=("שם לקוח", "count"), hours=("_h", "sum"))
+            .reset_index().rename(columns={"_d": "date"})
+            .sort_values("date").tail(60)
+        )
+        daily["hours"] = daily["hours"].round(1)
+
+        # Task distribution
+        task_dist = cdf["עבודה"].value_counts().to_dict()
+
+        # Top 10 clients by entry count
+        top_clients = (
+            cdf.groupby("שם לקוח")
+            .agg(count=("עבודה", "count"), hours=("_h", "sum"))
+            .reset_index()
+            .sort_values("count", ascending=False).head(10)
+            .rename(columns={"שם לקוח": "name"})
+        )
+        top_clients["hours"] = top_clients["hours"].round(1)
+
+        # Top 10 fields by hours
+        fdf = cdf[cdf["שם חלקה"].fillna("").str.strip() != ""]
+        top_fields = (
+            fdf.groupby("שם חלקה")
+            .agg(hours=("_h", "sum"), entries=("שם לקוח", "count"))
+            .reset_index()
+            .sort_values("hours", ascending=False).head(10)
+            .rename(columns={"שם חלקה": "name"})
+        )
+        top_fields["hours"] = top_fields["hours"].round(1)
+
+        # Crop hours (top 8)
+        crp = cdf[cdf["גידול"].fillna("").str.strip() != ""]
+        crop_h = (
+            crp.groupby("גידול")["_h"].sum()
+            .reset_index()
+            .sort_values("_h", ascending=False).head(8)
+            .rename(columns={"גידול": "name", "_h": "hours"})
+        )
+        crop_h["hours"] = crop_h["hours"].round(1)
+
+        # Monthly trend (last 12 months in range)
+        cdf_v["_month"] = cdf_v["_d"].dt.strftime("%Y-%m")
+        monthly = (
+            cdf_v.groupby("_month")
+            .agg(entries=("שם לקוח", "count"), hours=("_h", "sum"))
+            .reset_index().rename(columns={"_month": "month"})
+            .sort_values("month").tail(12)
+        )
+        monthly["hours"] = monthly["hours"].round(1)
+
+        return jsonify({
+            "kpis":          kpis,
+            "daily_trend":   daily.to_dict(orient="records"),
+            "task_dist":     task_dist,
+            "top_clients":   top_clients.to_dict(orient="records"),
+            "top_fields":    top_fields.to_dict(orient="records"),
+            "crop_hours":    crop_h.to_dict(orient="records"),
+            "monthly_trend": monthly.to_dict(orient="records"),
+            "updated_at":    datetime.now().strftime("%H:%M:%S"),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Start bot thread ───────────────────────────────────────────────────────────

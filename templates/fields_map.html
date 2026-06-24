@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}מפת שדות{% endblock %}
+{% block nav_map %}active{% endblock %}
+
+{% block extra_style %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  .map-wrap { display: flex; gap: 1rem; padding: 1rem 1.5rem 1.5rem; }
+  #map { flex: 1; height: calc(100vh - 185px); min-height: 480px; border-radius: 14px;
+         box-shadow: 0 2px 12px rgba(0,0,0,.15); z-index: 0; }
+
+  /* Side panel */
+  .side-panel {
+    width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: .6rem;
+    height: calc(100vh - 185px); overflow-y: auto;
+  }
+  .side-panel::-webkit-scrollbar { width: 5px; }
+  .side-panel::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+  .field-card {
+    background: #fff; border-radius: 10px; padding: .75rem 1rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.08); cursor: pointer;
+    border: 2px solid transparent; transition: border-color .15s, box-shadow .15s;
+  }
+  .field-card:hover { border-color: #3a6fa8; box-shadow: 0 2px 8px rgba(58,111,168,.2); }
+  .field-card.selected { border-color: #1a2f4e; box-shadow: 0 2px 10px rgba(26,47,78,.25); }
+  .field-card.no-coords { border-color: #ffc107; background: #fffdf0; }
+  .field-card.placing   { border-color: #0d6efd; background: #f0f5ff; animation: pulse .8s infinite alternate; }
+
+  @keyframes pulse { from { box-shadow: 0 0 0 rgba(13,110,253,.3); } to { box-shadow: 0 0 10px rgba(13,110,253,.5); } }
+
+  .field-name { font-weight: 700; font-size: .95rem; color: #1a2f4e; }
+  .field-meta { font-size: .78rem; color: #666; display: flex; flex-wrap: wrap; gap: .3rem .8rem; margin-top: .3rem; }
+  .badge-hours {
+    display: inline-block; font-size: .72rem; font-weight: 700; border-radius: 6px;
+    padding: .15rem .5rem; color: #fff; margin-bottom: .25rem;
+  }
+  .btn-place {
+    font-size: .72rem; padding: .2rem .55rem; margin-top: .4rem; border-radius: 6px;
+    border: none; cursor: pointer; color: #fff; background: #0d6efd;
+  }
+  .btn-place.cancel { background: #dc3545; }
+  .btn-place.reposition { background: #6c757d; }
+
+  /* Toolbar */
+  .map-toolbar {
+    display: flex; align-items: center; gap: .8rem; padding: .6rem 1.5rem .2rem;
+    flex-wrap: wrap;
+  }
+  .map-toolbar h2 { font-size: 1.2rem; font-weight: 700; color: #1a2f4e; margin: 0; }
+  .legend { display: flex; gap: .6rem; align-items: center; font-size: .78rem; color: #555; margin-right: auto; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+  .placing-hint {
+    display: none; background: #0d6efd; color: #fff;
+    padding: .4rem 1rem; border-radius: 8px; font-size: .82rem; font-weight: 600;
+  }
+  .placing-hint.show { display: inline-block; }
+
+  /* Leaflet popup override for RTL */
+  .leaflet-popup-content { direction: rtl; text-align: right; min-width: 170px; }
+  .popup-title { font-weight: 700; font-size: 1rem; margin-bottom: .4rem; color: #1a2f4e; }
+  .popup-row { font-size: .82rem; color: #444; margin: .15rem 0; }
+  .popup-row span { font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Hero -->
+<div class="hero">
+  <h1><i class="bi bi-geo-alt-fill me-2"></i>מפת שדות</h1>
+  <p class="mb-0 opacity-75" style="font-size:.9rem">לחץ על שם חלקה בפאנל → לחץ על המפה לסימון מיקום</p>
+</div>
+
+<!-- Toolbar -->
+<div class="map-toolbar">
+  <div class="legend">
+    <span class="legend-dot" style="background:#dc3545"></span> &gt;50 ש׳
+    <span class="legend-dot" style="background:#fd7e14"></span> 10–50 ש׳
+    <span class="legend-dot" style="background:#198754"></span> &lt;10 ש׳
+    <span class="legend-dot" style="background:#adb5bd"></span> לא מוגדר
+  </div>
+  <span class="placing-hint" id="placingHint">📍 לחץ על המפה למיקום השדה</span>
+</div>
+
+<!-- Map + Panel -->
+<div class="map-wrap">
+
+  <!-- Side panel -->
+  <div class="side-panel" id="sidePanel">
+    <div class="text-center text-muted py-3" id="loadingMsg">
+      <div class="spinner-border spinner-border-sm"></div> טוען נתונים...
+    </div>
+  </div>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const CSRF = document.querySelector('meta[name="csrf-token"]').content;
+
+// ── Map init ──────────────────────────────────────────────────────────────────
+const map = L.map("map", { zoomControl: true }).setView([31.5, 34.85], 9);
+
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  maxZoom: 18,
+}).addTo(map);
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let fields       = [];
+let markers      = {};      // fieldName → L.circleMarker
+let placingField = null;    // name of field being placed
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function hourColor(h) {
+  if (h > 50) return "#dc3545";
+  if (h > 10) return "#fd7e14";
+  return "#198754";
+}
+function hourRadius(h) {
+  return Math.max(8, Math.min(24, 8 + h * 0.22));
+}
+function badgeColor(h) { return hourColor(h); }
+
+function formatDate(d) {
+  if (!d) return "";
+  const [y, m, day] = d.split("-");
+  return `${day}/${m}/${y}`;
+}
+
+// ── Draw / update marker ──────────────────────────────────────────────────────
+function addMarker(field) {
+  if (field.lat == null || field.lng == null) return;
+  const color  = hourColor(field.hours);
+  const radius = hourRadius(field.hours);
+
+  const m = L.circleMarker([field.lat, field.lng], {
+    radius, color: "#fff", weight: 2,
+    fillColor: color, fillOpacity: 0.88,
+  }).addTo(map);
+
+  m.bindPopup(`
+    <div class="popup-title">📍 ${field.name}</div>
+    <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
+    <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
+    ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${field.crop}</span></div>` : ""}
+    ${field.client ? `<div class="popup-row">👤 לקוח מוביל: <span>${field.client}</span></div>` : ""}
+    ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${formatDate(field.last_date)}</span></div>` : ""}
+    <div style="margin-top:.5rem;font-size:.72rem;color:#888">גרור לשינוי מיקום</div>
+  `);
+
+  m.on("click", () => highlightCard(field.name));
+
+  // Allow dragging to reposition
+  m.options.interactive = true;
+  m._dragging = false;
+  let dragStart = null;
+
+  m.on("mousedown", function(e) {
+    dragStart = e.latlng;
+    map.dragging.disable();
+    map.on("mousemove", onDrag);
+    map.once("mouseup", function(eu) {
+      map.dragging.enable();
+      map.off("mousemove", onDrag);
+      if (dragStart && eu.latlng.distanceTo(dragStart) > 5) {
+        saveCoords(field.name, eu.latlng.lat, eu.latlng.lng);
+        m.setLatLng(eu.latlng);
+        field.lat = eu.latlng.lat;
+        field.lng = eu.latlng.lng;
+        m.openPopup();
+      }
+      dragStart = null;
+    });
+    function onDrag(em) { m.setLatLng(em.latlng); }
+  });
+
+  markers[field.name] = m;
+}
+
+// ── Save coords to server ──────────────────────────────────────────────────────
+async function saveCoords(name, lat, lng) {
+  try {
+    const res = await fetch("/api/fields/coords", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
+      body: JSON.stringify({ name, lat, lng }),
+    });
+    if (!res.ok) console.error("Save failed", await res.text());
+  } catch(e) { console.error(e); }
+}
+
+// ── Highlight card ────────────────────────────────────────────────────────────
+function highlightCard(name) {
+  document.querySelectorAll(".field-card").forEach(c => c.classList.remove("selected"));
+  const card = document.getElementById("card-" + CSS.escape(name));
+  if (card) { card.classList.add("selected"); card.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+  if (markers[name]) markers[name].openPopup();
+}
+
+// ── Placing mode ──────────────────────────────────────────────────────────────
+function startPlacing(name) {
+  placingField = name;
+  map.getContainer().style.cursor = "crosshair";
+  document.getElementById("placingHint").classList.add("show");
+  document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
+  const card = document.getElementById("card-" + CSS.escape(name));
+  if (card) card.classList.add("placing");
+}
+
+function stopPlacing() {
+  placingField = null;
+  map.getContainer().style.cursor = "";
+  document.getElementById("placingHint").classList.remove("show");
+  document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
+}
+
+map.on("click", function(e) {
+  if (!placingField) return;
+  const name = placingField;
+  const { lat, lng } = e.latlng;
+
+  // Remove old marker if exists
+  if (markers[name]) { markers[name].remove(); delete markers[name]; }
+
+  const field = fields.find(f => f.name === name);
+  if (field) { field.lat = lat; field.lng = lng; }
+
+  saveCoords(name, lat, lng);
+  if (field) addMarker(field);
+  if (markers[name]) markers[name].openPopup();
+
+  stopPlacing();
+  renderPanel();
+});
+
+// ── Build side panel ──────────────────────────────────────────────────────────
+function renderPanel() {
+  const panel = document.getElementById("sidePanel");
+  if (!fields.length) {
+    panel.innerHTML = '<div class="text-muted text-center py-4">אין שדות בנתונים</div>';
+    return;
+  }
+
+  const positioned   = fields.filter(f => f.lat != null);
+  const unpositioned = fields.filter(f => f.lat == null);
+
+  let html = "";
+
+  if (unpositioned.length) {
+    html += `<div style="font-size:.72rem;font-weight:700;color:#856404;background:#fff3cd;border-radius:8px;padding:.4rem .8rem">
+      ⚠️ ${unpositioned.length} שדות ללא מיקום — לחץ "סמן" להוספה
+    </div>`;
+  }
+
+  for (const f of [...unpositioned, ...positioned]) {
+    const hasCoords  = f.lat != null;
+    const bColor     = hasCoords ? badgeColor(f.hours) : "#adb5bd";
+    const cardClass  = hasCoords ? "" : " no-coords";
+    const btnLabel   = hasCoords ? "הזז" : "סמן";
+    const btnClass   = hasCoords ? "reposition" : "";
+
+    html += `
+    <div class="field-card${cardClass}" id="card-${CSS.escape(f.name)}"
+         onclick="highlightCard('${f.name.replace(/'/g,"\\'")}')">
+      <span class="badge-hours" style="background:${bColor}">${f.hours} ש׳</span>
+      <div class="field-name">${f.name}</div>
+      <div class="field-meta">
+        <span>🔧 ${f.jobs} עבודות</span>
+        ${f.crop   ? `<span>🌱 ${f.crop}</span>` : ""}
+        ${f.client ? `<span>👤 ${f.client}</span>` : ""}
+        ${f.last_date ? `<span>📅 ${formatDate(f.last_date)}</span>` : ""}
+      </div>
+      <button class="btn-place ${btnClass}"
+        onclick="event.stopPropagation(); handlePlaceBtn('${f.name.replace(/'/g,"\\'")}', ${hasCoords})">
+        📍 ${btnLabel}
+      </button>
+    </div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+function handlePlaceBtn(name, hasCoords) {
+  if (placingField === name) {
+    stopPlacing();
+    renderPanel();
+    return;
+  }
+  startPlacing(name);
+  if (hasCoords && markers[name]) {
+    map.setView(markers[name].getLatLng(), Math.max(map.getZoom(), 13));
+  }
+  renderPanel();
+  // Re-mark the card as placing after renderPanel rebuild
+  const card = document.getElementById("card-" + CSS.escape(name));
+  if (card) card.classList.add("placing");
+  // Update button text
+  const btn = card && card.querySelector(".btn-place");
+  if (btn) { btn.textContent = "❌ ביטול"; btn.classList.add("cancel"); }
+}
+
+// ── Load data ─────────────────────────────────────────────────────────────────
+(async function load() {
+  try {
+    const res = await fetch("/api/fields");
+    if (!res.ok) throw new Error(await res.text());
+    fields = await res.json();
+    document.getElementById("loadingMsg")?.remove();
+
+    fields.forEach(addMarker);
+    renderPanel();
+
+    // Fit map to positioned markers
+    const positioned = fields.filter(f => f.lat != null);
+    if (positioned.length) {
+      const bounds = L.latLngBounds(positioned.map(f => [f.lat, f.lng]));
+      map.fitBounds(bounds.pad(0.2));
+    }
+  } catch(e) {
+    document.getElementById("loadingMsg").textContent = "שגיאה בטעינת נתונים: " + e.message;
+  }
+})();
+</script>
+{% endblock %}
