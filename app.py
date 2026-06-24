@@ -1006,13 +1006,26 @@ def change_password():
 # ── Filters helper ─────────────────────────────────────────────────────────────
 
 def _apply_filters(df):
-    q = request.args.get("q", "").strip()
+    q         = request.args.get("q",         "").strip()
+    client    = request.args.get("client",    "").strip()
+    date_from = request.args.get("date_from", "").strip()
+    date_to   = request.args.get("date_to",   "").strip()
+    task      = request.args.get("task",      "").strip()
+
     if q:
         mask = df.apply(
             lambda row: row.astype(str).str.contains(q, case=False, na=False).any(),
             axis=1,
         )
         df = df[mask]
+    if client:
+        df = df[df["שם לקוח"].str.contains(client, case=False, na=False)]
+    if date_from:
+        df = df[df["תאריך"] >= date_from]
+    if date_to:
+        df = df[df["תאריך"] <= date_to]
+    if task:
+        df = df[df["עבודה"] == task]
     return df
 
 
@@ -1063,6 +1076,10 @@ def index():
             top_client=top_client,
             top_task=top_task,
             q_filter=request.args.get("q", "").strip(),
+            client_filter=request.args.get("client", "").strip(),
+            date_from=request.args.get("date_from", "").strip(),
+            date_to=request.args.get("date_to", "").strip(),
+            task_filter=request.args.get("task", "").strip(),
             task_options=sorted(VALID_TASKS),
             task_counts=task_counts,
             client_counts=client_counts,
@@ -1076,7 +1093,7 @@ def index():
             "index.html",
             records=[], total_count=0, filtered_count=0,
             month_count=0, top_client="—", top_task="—",
-            q_filter="",
+            q_filter="", client_filter="", date_from="", date_to="", task_filter="",
             task_options=[], task_counts={}, client_counts={},
             page=1, total_pages=1, error=str(e),
         )
