@@ -3,7 +3,7 @@
 {% block nav_map %}active{% endblock %}
 
 {% block extra_style %}
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   .map-wrap { display: flex; gap: 1rem; padding: 1rem 1.5rem 1.5rem; }
   #map { flex: 1; height: calc(100vh - 185px); min-height: 480px; border-radius: 14px;
@@ -101,7 +101,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 

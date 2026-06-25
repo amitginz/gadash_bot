@@ -15,6 +15,9 @@ _cache_data = None
 _cache_time = 0.0
 _CACHE_TTL  = 300
 
+_coords_cache      = None
+_coords_cache_time = 0.0
+
 _GS_SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -141,6 +144,10 @@ def _get_workers_sheet():
 
 
 def _load_field_coords() -> dict:
+    global _coords_cache, _coords_cache_time
+    with _gs_lock:
+        if _coords_cache is not None and (time.time() - _coords_cache_time) < _CACHE_TTL:
+            return dict(_coords_cache)
     try:
         ws = _get_fieldcoords_sheet()
         if not ws:
@@ -153,12 +160,16 @@ def _load_field_coords() -> dict:
                     coords[row[0]] = {"lat": float(row[1]), "lng": float(row[2])}
                 except ValueError:
                     pass
-        return coords
+        with _gs_lock:
+            _coords_cache = coords
+            _coords_cache_time = time.time()
+        return dict(coords)
     except Exception:
         return {}
 
 
 def _save_field_coord(name: str, lat: float, lng: float):
+    global _coords_cache, _coords_cache_time
     try:
         ws = _get_fieldcoords_sheet()
         if not ws:
@@ -167,8 +178,14 @@ def _save_field_coord(name: str, lat: float, lng: float):
         for i, row in enumerate(rows[1:], start=2):
             if row and row[0] == name:
                 ws.update([[name, lat, lng]], f"A{i}:C{i}")
-                return
-        ws.append_row([name, lat, lng])
+                break
+        else:
+            ws.append_row([name, lat, lng])
+        # Update in-memory cache immediately so next read is instant
+        with _gs_lock:
+            if _coords_cache is not None:
+                _coords_cache[name] = {"lat": lat, "lng": lng}
+                _coords_cache_time = time.time()
     except Exception as e:
         print(f"[FieldCoords] save error: {e}")
 
