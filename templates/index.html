@@ -742,12 +742,13 @@
     document.getElementById('advFilters')?.classList.toggle('d-none');
   });
 
-  // Filter memory — persist to localStorage, restore when no URL params
+  // Filter memory — persist to localStorage, restore when advanced filters are absent from URL
   const FILTER_KEY = 'gadash_filters';
   const filterForm = document.getElementById('filterForm');
-  const hasUrlFilters = location.search.length > 1;
+  const _urlParams = new URLSearchParams(location.search);
+  const hasAdvancedFilters = ['client','date_from','date_to','task'].some(k => _urlParams.get(k));
   if (filterForm) {
-    if (!hasUrlFilters) {
+    if (!hasAdvancedFilters) {
       const saved = JSON.parse(localStorage.getItem(FILTER_KEY) || '{}');
       let restored = false;
       ['client','date_from','date_to','task'].forEach(k => {

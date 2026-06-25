@@ -1,1151 +1,37 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file, flash, session, jsonify
-from functools import wraps
-from urllib.parse import urlencode
-import pandas as pd
-from datetime import date, datetime, timedelta
-import gspread
 import asyncio
+import math
+import os
+import secrets
 import threading
-import hashlib
-import collections
-from google.oauth2.service_account import Credentials
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ConversationHandler,
-    ContextTypes, filters
-)
+import time
+from datetime import date, datetime, timedelta
+from functools import wraps
 from io import BytesIO
-from dataclasses import dataclass
-import os, json, time, math, re, secrets, csv
-
-WEB_APP_URL      = os.environ.get("WEB_APP_URL", "https://gadash-bot.fly.dev")
-PAGE_SIZE        = 50
-SUBSCRIBERS_FILE = "subscribers.json"
-AUDIT_LOG_FILE   = "audit.log"
-
-MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT, REGISTER_NAME, REGISTER_PASSWORD = range(16)
-
-TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
-CONFIRM_KEYBOARD = [["כן", "לא"]]
-NOTES_KEYBOARD  = [["ללא הערות"]]
-MENU_KEYBOARD   = [
-    ["הזן עבודה חדשה"],
-    ["5 עבודות אחרונות", "חפש לפי לקוח"],
-    ["סטטיסטיקות", "ערוך רשומה"],
-    ["סיים"],
-]
-
-COLUMNS     = ["שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול", "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין"]
-VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
-
-
-@dataclass
-class WorkEntry:
-    client:     str
-    date:       str
-    task:       str
-    field_name: str = ""
-    crop:       str = ""
-    amount:     str = ""
-    hours:      str = ""
-    tool:       str = ""
-    operator:   str = ""
-    notes:      str = ""
-    entered_by: str = ""
-
-    def __post_init__(self):
-        self.client = self.client.strip()
-        self.date   = self.date.strip()
-        self.task   = self.task.strip()
-        if not self.client:
-            raise ValueError("שם לקוח חובה")
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", self.date):
-            raise ValueError(f"תאריך לא תקין: '{self.date}' — נדרש YYYY-MM-DD")
-        if self.task not in VALID_TASKS:
-            raise ValueError(f"סוג עבודה לא תקין: '{self.task}'")
-
-    def to_sheet_row(self) -> list:
-        return [
-            self.client, self.date, self.task, self.field_name,
-            self.crop, self.amount, self.hours,
-            self.tool, self.operator, self.notes, self.entered_by,
-        ]
-
-    def to_dict(self) -> dict:
-        return dict(zip(COLUMNS, self.to_sheet_row()))
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "WorkEntry":
-        return cls(
-            client=str(d.get("שם לקוח", "")),
-            date=str(d.get("תאריך", "")),
-            task=str(d.get("עבודה", "")),
-            field_name=str(d.get("שם חלקה", "")),
-            crop=str(d.get("גידול", "")),
-            amount=str(d.get("כמות", "")),
-            hours=str(d.get("שעות", "")),
-            tool=str(d.get("כלי", "")),
-            operator=str(d.get("מפעיל", "")),
-            notes=str(d.get("הערות", "")),
-            entered_by=str(d.get("מזין", "")),
-        )
-
-    @classmethod
-    def from_form(cls, form, entered_by: str = "Web") -> "WorkEntry":
-        return cls(
-            client=form.get("שם לקוח", ""),
-            date=form.get("תאריך", ""),
-            task=form.get("עבודה", ""),
-            field_name=form.get("שם חלקה", ""),
-            crop=form.get("גידול", ""),
-            amount=form.get("כמות", ""),
-            hours=form.get("שעות", ""),
-            tool=form.get("כלי", ""),
-            operator=form.get("מפעיל", ""),
-            notes=form.get("הערות", ""),
-            entered_by=entered_by,
-        )
-
-    @classmethod
-    def from_bot(cls, user_data: dict, full_name: str) -> "WorkEntry":
-        return cls(
-            client=user_data.get("שם לקוח", ""),
-            date=user_data.get("תאריך", ""),
-            task=user_data.get("עבודה", ""),
-            field_name=user_data.get("שם חלקה", ""),
-            crop=user_data.get("גידול", ""),
-            amount=user_data.get("כמות", ""),
-            hours=user_data.get("שעות", ""),
-            tool=user_data.get("כלי", ""),
-            operator=user_data.get("מפעיל", ""),
-            notes=user_data.get("הערות", ""),
-            entered_by=full_name,
-        )
-
-
-# ── Google Sheets ──────────────────────────────────────────────────────────────
-
-_gs_client  = None
-_gs_lock    = threading.Lock()
-_cache_data = None
-_cache_time = 0.0
-_CACHE_TTL  = 300
-
-
-def _invalidate_cache():
-    global _cache_data, _cache_time
-    _cache_data = None
-    _cache_time = 0.0
-
-
-_GS_SCOPE = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-
-def _init_gs_client():
-    """Initialise _gs_client. Must be called while _gs_lock is held."""
-    global _gs_client
-    if _gs_client is not None:
-        return
-    raw = os.environ.get("GOOGLE_CREDS")
-    if raw:
-        creds = Credentials.from_service_account_info(json.loads(raw), scopes=_GS_SCOPE)
-    elif os.path.exists("credentials.json"):
-        creds = Credentials.from_service_account_file("credentials.json", scopes=_GS_SCOPE)
-    else:
-        raise RuntimeError("No Google credentials found.")
-    _gs_client = gspread.authorize(creds)
-
-
-def _get_sheet():
-    global _gs_client
-    last_exc = None
-    for attempt in range(3):
-        with _gs_lock:
-            try:
-                _init_gs_client()
-                return _gs_client.open("Gadash Data").sheet1
-            except Exception as e:
-                last_exc = e
-                _gs_client = None
-        if attempt < 2:
-            time.sleep(1.5 * (attempt + 1))
-    raise last_exc
-
-
-def _get_settings_sheet():
-    """Opens (or creates) the Settings worksheet. Returns None on failure."""
-    global _gs_client
-    with _gs_lock:
-        try:
-            _init_gs_client()
-            wb = _gs_client.open("Gadash Data")
-            try:
-                return wb.worksheet("Settings")
-            except gspread.WorksheetNotFound:
-                return wb.add_worksheet("Settings", rows=10, cols=2)
-        except Exception:
-            _gs_client = None
-            return None
-
-
-def _get_fieldcoords_sheet():
-    """Opens (or creates) the FieldCoords worksheet."""
-    global _gs_client
-    with _gs_lock:
-        try:
-            _init_gs_client()
-            wb = _gs_client.open("Gadash Data")
-            try:
-                return wb.worksheet("FieldCoords")
-            except gspread.WorksheetNotFound:
-                ws = wb.add_worksheet("FieldCoords", rows=200, cols=3)
-                ws.append_row(["שם חלקה", "lat", "lng"])
-                return ws
-        except Exception:
-            _gs_client = None
-            return None
-
-
-def _get_audit_sheet():
-    global _gs_client
-    with _gs_lock:
-        try:
-            _init_gs_client()
-            wb = _gs_client.open("Gadash Data")
-            try:
-                return wb.worksheet("AuditLog")
-            except gspread.WorksheetNotFound:
-                ws = wb.add_worksheet("AuditLog", rows=2000, cols=4)
-                ws.append_row(["ts", "action", "user", "detail"])
-                return ws
-        except Exception:
-            _gs_client = None
-            return None
-
-
-def _get_subscribers_sheet():
-    global _gs_client
-    with _gs_lock:
-        try:
-            _init_gs_client()
-            wb = _gs_client.open("Gadash Data")
-            try:
-                return wb.worksheet("Subscribers")
-            except gspread.WorksheetNotFound:
-                ws = wb.add_worksheet("Subscribers", rows=200, cols=1)
-                ws.append_row(["chat_id"])
-                return ws
-        except Exception:
-            _gs_client = None
-            return None
-
-
-def _get_workers_sheet():
-    global _gs_client
-    with _gs_lock:
-        try:
-            _init_gs_client()
-            wb = _gs_client.open("Gadash Data")
-            try:
-                return wb.worksheet("Workers")
-            except gspread.WorksheetNotFound:
-                ws = wb.add_worksheet("Workers", rows=200, cols=3)
-                ws.append_row(["שם", "password_hash", "telegram_id"])
-                return ws
-        except Exception:
-            _gs_client = None
-            return None
-
-
-def _load_field_coords() -> dict:
-    """Returns {field_name: {lat: float, lng: float}}."""
-    try:
-        ws = _get_fieldcoords_sheet()
-        if not ws:
-            return {}
-        rows = ws.get_all_values()
-        coords = {}
-        for row in rows[1:]:
-            if len(row) >= 3 and row[0] and row[1] and row[2]:
-                try:
-                    coords[row[0]] = {"lat": float(row[1]), "lng": float(row[2])}
-                except ValueError:
-                    pass
-        return coords
-    except Exception:
-        return {}
-
-
-def _save_field_coord(name: str, lat: float, lng: float):
-    """Upsert lat/lng for a field. Overwrites existing row if found."""
-    try:
-        ws = _get_fieldcoords_sheet()
-        if not ws:
-            return
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.update([[name, lat, lng]], f"A{i}:C{i}")
-                return
-        ws.append_row([name, lat, lng])
-    except Exception as e:
-        print(f"[FieldCoords] save error: {e}")
-
-
-def _load_passwords():
-    """Read persisted passwords from the Settings sheet (falls back to env vars)."""
-    global _current_password, _worker_password
-    try:
-        ws = _get_settings_sheet()
-        if not ws:
-            return
-        rows = ws.get_all_values()
-        settings = {r[0]: r[1] for r in rows if len(r) >= 2 and r[0] and r[1]}
-        if settings.get("web_password"):
-            _current_password = settings["web_password"]
-        if settings.get("worker_password"):
-            _worker_password = settings["worker_password"]
-    except Exception:
-        pass
-
-
-def _save_passwords():
-    """Persist current passwords to the Settings sheet."""
-    try:
-        ws = _get_settings_sheet()
-        if ws:
-            ws.update([["web_password", _current_password],
-                       ["worker_password", _worker_password]], "A1")
-    except Exception:
-        pass
-
-
-def load_data_from_gsheet() -> pd.DataFrame:
-    global _cache_data, _cache_time
-    with _gs_lock:
-        if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
-            return _cache_data.copy()
-    try:
-        sheet = _get_sheet()
-        all_values = sheet.get_all_values()
-        if not all_values or len(all_values) < 2:
-            df = pd.DataFrame(columns=COLUMNS)
-        else:
-            headers = [h.strip() for h in all_values[0]]
-            records = [dict(zip(headers, row)) for row in all_values[1:] if any(row)]
-            df = pd.DataFrame(records)
-            for col in COLUMNS:
-                if col not in df.columns:
-                    df[col] = ""
-            df = df[COLUMNS]
-        with _gs_lock:
-            _cache_data = df
-            _cache_time = time.time()
-        return df.copy()
-    except Exception as e:
-        print(f"[GSheet] load error: {e}")
-        return pd.DataFrame(columns=COLUMNS)
-
-
-def append_row_to_gsheet(entry: WorkEntry):
-    sheet = _get_sheet()
-    sheet.append_row(entry.to_sheet_row(), value_input_option="USER_ENTERED")
-    _invalidate_cache()
-
-
-_N_COLS = len(COLUMNS)  # 11 → column K
-
-
-def edit_row_in_gsheet(row_id: int, entry: WorkEntry):
-    """Update a single row in place — no full rewrite."""
-    sheet = _get_sheet()
-    sheet_row = row_id + 2  # 1-based + header offset
-    end_col = chr(64 + _N_COLS)
-    sheet.update([entry.to_sheet_row()], f"A{sheet_row}:{end_col}{sheet_row}",
-                 value_input_option="USER_ENTERED")
-    _invalidate_cache()
-
-
-def delete_row_in_gsheet(row_id: int):
-    """Delete a single row by its 0-based DataFrame index."""
-    sheet = _get_sheet()
-    sheet.delete_rows(row_id + 2)
-    _invalidate_cache()
-
-
-def bulk_delete_rows_in_gsheet(row_ids: list):
-    """Delete multiple rows — bottom-up so indices stay valid."""
-    sheet = _get_sheet()
-    for df_idx in sorted(row_ids, reverse=True):
-        sheet.delete_rows(df_idx + 2)
-    _invalidate_cache()
-
-
-def patch_cell_in_gsheet(row_id: int, field: str, value: str):
-    """Update a single cell — used by inline PATCH."""
-    sheet = _get_sheet()
-    col_idx = COLUMNS.index(field) + 1  # 1-based
-    sheet.update_cell(row_id + 2, col_idx, value)
-    _invalidate_cache()
-
-
-def create_entry(entry: WorkEntry, actor: str):
-    """Single point for adding a new work entry — used by both web and bot."""
-    append_row_to_gsheet(entry)
-    _log_audit("add", actor, f"{entry.client} | {entry.date} | {entry.task}")
-
-
-def save_data_to_gsheet(df: pd.DataFrame):
-    sheet = _get_sheet()
-    sheet.clear()
-    sheet.append_row(COLUMNS)
-    if not df.empty:
-        rows = df[COLUMNS].fillna("").astype(str).values.tolist()
-        sheet.append_rows(rows, value_input_option="USER_ENTERED")
-    _invalidate_cache()
-
-
-# ── Audit log ──────────────────────────────────────────────────────────────────
-
-_audit_lock       = threading.Lock()
-_audit_queue      = collections.deque()
-_audit_queue_lock = threading.Lock()
-
-
-def _log_audit(action: str, user: str, detail: str):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    # Local file for fast reads within the same process lifetime
-    entry_json = json.dumps({"ts": ts, "action": action, "user": user, "detail": detail},
-                            ensure_ascii=False)
-    with _audit_lock:
-        try:
-            with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(entry_json + "\n")
-        except Exception:
-            pass
-    # Queue for Sheets persistence (flushed by background thread)
-    with _audit_queue_lock:
-        _audit_queue.append([ts, action, user, detail])
-
-
-def _read_audit_log(limit: int = 200) -> list:
-    # Prefer local file (fast); fall back to Sheets after restart
-    if os.path.exists(AUDIT_LOG_FILE):
-        try:
-            with _audit_lock:
-                with open(AUDIT_LOG_FILE, encoding="utf-8") as f:
-                    lines = f.readlines()
-            entries = [json.loads(l) for l in lines if l.strip()]
-            if entries:
-                return list(reversed(entries[-limit:]))
-        except Exception:
-            pass
-    # Fallback: read from Sheets
-    try:
-        ws = _get_audit_sheet()
-        if ws:
-            rows = ws.get_all_values()
-            entries = [{"ts": r[0], "action": r[1], "user": r[2], "detail": r[3]}
-                       for r in rows[1:] if len(r) >= 4]
-            return list(reversed(entries[-limit:]))
-    except Exception:
-        pass
-    return []
-
-
-def _flush_audit_to_sheets():
-    """Background thread: flush queued audit rows to Sheets every 30 s."""
-    while True:
-        time.sleep(30)
-        with _audit_queue_lock:
-            if not _audit_queue:
-                continue
-            rows = list(_audit_queue)
-            _audit_queue.clear()
-        try:
-            ws = _get_audit_sheet()
-            if ws:
-                ws.append_rows(rows, value_input_option="USER_ENTERED")
-        except Exception as e:
-            print(f"[Audit] flush error: {e}")
-
-
-# ── Subscriber management (Sheets-backed) ─────────────────────────────────────
-
-_subscribers_cache: set | None = None
-_subscribers_lock = threading.Lock()
-
-
-def _get_subscribers() -> set:
-    global _subscribers_cache
-    with _subscribers_lock:
-        if _subscribers_cache is not None:
-            return set(_subscribers_cache)
-    try:
-        ws = _get_subscribers_sheet()
-        if ws:
-            rows = ws.get_all_values()
-            subs = {int(r[0]) for r in rows[1:] if r and r[0].lstrip("-").isdigit()}
-            with _subscribers_lock:
-                _subscribers_cache = subs
-            return set(subs)
-    except Exception:
-        pass
-    return set()
-
-
-def _add_subscriber(chat_id: int):
-    global _subscribers_cache
-    subs = _get_subscribers()
-    if chat_id in subs:
-        return
-    subs.add(chat_id)
-    with _subscribers_lock:
-        _subscribers_cache = subs
-    try:
-        ws = _get_subscribers_sheet()
-        if ws:
-            ws.append_row([str(chat_id)])
-    except Exception as e:
-        print(f"[Subscribers] save error: {e}")
-
-
-# ── Worker accounts ────────────────────────────────────────────────────────────
-
-def _hash_pw(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
-
-
-def _load_workers() -> list:
-    """Returns [{שם, password_hash, telegram_id}]."""
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return []
-        rows = ws.get_all_values()
-        return [
-            {"שם": r[0],
-             "password_hash": r[1] if len(r) > 1 else "",
-             "telegram_id":   r[2] if len(r) > 2 else ""}
-            for r in rows[1:] if r and r[0]
-        ]
-    except Exception:
-        return []
-
-
-def _verify_worker(name: str, password: str) -> bool:
-    ph = _hash_pw(password)
-    return any(w["שם"] == name and w["password_hash"] == ph for w in _load_workers())
-
-
-def _add_worker(name: str, password: str) -> bool:
-    workers = _load_workers()
-    if any(w["שם"] == name for w in workers):
-        return False
-    try:
-        ws = _get_workers_sheet()
-        if ws:
-            ws.append_row([name, _hash_pw(password), ""])
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def _delete_worker(name: str) -> bool:
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return False
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.delete_rows(i)
-                return True
-    except Exception:
-        pass
-    return False
-
-
-def _get_worker_by_telegram_id(telegram_id: int) -> dict | None:
-    tid = str(telegram_id)
-    return next((w for w in _load_workers() if w.get("telegram_id") == tid), None)
-
-
-def _link_worker_telegram(name: str, telegram_id: int) -> bool:
-    """Store telegram_id on the worker's row."""
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return False
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.update_cell(i, 3, str(telegram_id))
-                return True
-    except Exception:
-        pass
-    return False
-
-
-# ── Telegram Bot ───────────────────────────────────────────────────────────────
-
-def _menu_markup():
-    return ReplyKeyboardMarkup(MENU_KEYBOARD, resize_keyboard=True)
-
-
-def _recent_clients_markup():
-    try:
-        df = load_data_from_gsheet()
-        seen, recent = set(), []
-        for name in reversed(df["שם לקוח"].dropna().tolist()):
-            name = name.strip()
-            if name and name not in seen:
-                seen.add(name)
-                recent.append(name)
-            if len(recent) == 5:
-                break
-        if recent:
-            return ReplyKeyboardMarkup([[c] for c in recent], one_time_keyboard=True, resize_keyboard=True)
-    except Exception:
-        pass
-    return ReplyKeyboardRemove()
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tid = update.message.from_user.id
-    workers = _load_workers()
-    if workers:
-        worker = _get_worker_by_telegram_id(tid)
-        if worker:
-            context.user_data["_worker_name"] = worker["שם"]
-            _add_subscriber(tid)
-            await update.message.reply_text(
-                f'שלום {worker["שם"]}! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
-                reply_markup=_menu_markup(),
-            )
-            return MENU
-        else:
-            await update.message.reply_text(
-                f"ברוך הבא! עליך להירשם.\nהכנס את שם המשתמש שלך (המופיע במערכת):\n\n"
-                f"_(מזהה Telegram שלך: `{tid}`)_",
-                parse_mode="Markdown",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return REGISTER_NAME
-    # No workers configured — allow anyone (legacy mode)
-    _add_subscriber(tid)
-    await update.message.reply_text(
-        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
-        reply_markup=_menu_markup(),
-    )
-    return MENU
-
-
-async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tid = update.message.from_user.id
-    workers = _load_workers()
-    if workers and not _get_worker_by_telegram_id(tid):
-        return await start(update, context)
-    _add_subscriber(tid)
-    return await _handle_menu(update, context, update.message.text.strip())
-
-
-async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    name = update.message.text.strip()
-    workers = _load_workers()
-    if not any(w["שם"] == name for w in workers):
-        await update.message.reply_text("שם לא נמצא במערכת. פנה למנהל לרישום.")
-        return ConversationHandler.END
-    context.user_data["_reg_name"] = name
-    await update.message.reply_text("הכנס סיסמה:")
-    return REGISTER_PASSWORD
-
-
-async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pwd  = update.message.text.strip()
-    name = context.user_data.get("_reg_name", "")
-    if _verify_worker(name, pwd):
-        _link_worker_telegram(name, update.message.from_user.id)
-        context.user_data["_worker_name"] = name
-        _add_subscriber(update.message.from_user.id)
-        await update.message.reply_text(
-            f"✅ נרשמת בהצלחה כ-{name}!\nמה תרצה לעשות?",
-            reply_markup=_menu_markup(),
-        )
-        return MENU
-    await update.message.reply_text("סיסמה שגויה. נסה שוב או פנה למנהל.")
-    return ConversationHandler.END
-
-
-async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await _handle_menu(update, context, update.message.text.strip())
-
-
-async def _handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    if text == "הזן עבודה חדשה":
-        await update.message.reply_text("מעולה! מה שם הלקוח?", reply_markup=_recent_clients_markup())
-        return CLIENT
-    elif text == "5 עבודות אחרונות":
-        await bot_recent(update, context)
-        return MENU
-    elif text == "חפש לפי לקוח":
-        await update.message.reply_text("הכנס שם לקוח לחיפוש:", reply_markup=ReplyKeyboardRemove())
-        return SEARCH
-    elif text == "סטטיסטיקות":
-        await bot_stats(update, context)
-        return MENU
-    elif text == "ערוך רשומה":
-        return await bot_edit_last(update, context)
-    elif text == "סיים":
-        await update.message.reply_text("נתראה בקרוב! 👋", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
-    await update.message.reply_text(
-        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
-        reply_markup=_menu_markup(),
-    )
-    return MENU
-
-
-async def bot_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        df = load_data_from_gsheet()
-        if df.empty:
-            await update.message.reply_text("אין עבודות רשומות עדיין.", reply_markup=_menu_markup())
-            return
-        lines = ["📄 5 העבודות האחרונות:\n"]
-        for _, row in df.tail(5).iterrows():
-            lines.append(
-                f"• {row.get('תאריך','')} | {row.get('עבודה','')} | "
-                f"{row.get('שם חלקה','')} | {row.get('כמות','')} | {row.get('מזין','')}"
-            )
-        await update.message.reply_text("\n".join(lines), reply_markup=_menu_markup())
-    except Exception as e:
-        await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
-
-
-async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        df = load_data_from_gsheet()
-        if df.empty:
-            await update.message.reply_text("אין נתונים עדיין.", reply_markup=_menu_markup())
-            return
-        month_prefix = datetime.now().strftime("%Y-%m")
-        month_count  = int(df["תאריך"].str.startswith(month_prefix).sum())
-        top_client   = df["שם לקוח"].mode()[0]
-        top_task     = df["עבודה"].mode()[0]
-        task_lines   = "\n".join(f"  • {t}: {c}" for t, c in df["עבודה"].value_counts().items())
-        msg = (
-            f"📊 סטטיסטיקות:\n\n"
-            f"📋 סה\"כ עבודות: {len(df)}\n"
-            f"📅 החודש: {month_count}\n"
-            f"👤 לקוח מוביל: {top_client}\n"
-            f"🚜 עבודה נפוצה: {top_task}\n\n"
-            f"עבודות לפי סוג:\n{task_lines}"
-        )
-        await update.message.reply_text(msg, reply_markup=_menu_markup())
-    except Exception as e:
-        await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
-
-
-async def bot_edit_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        df = load_data_from_gsheet()
-        if df.empty:
-            await update.message.reply_text("אין עבודות לעריכה.", reply_markup=_menu_markup())
-            return MENU
-        tail = df.tail(5)
-        lines = ["✏️ בחר רשומה לעריכה:\n"]
-        choices = []
-        indices = []
-        for i, (idx, row) in enumerate(tail.iterrows(), 1):
-            lines.append(f"{i}. {row.get('תאריך','')} | {row.get('שם לקוח','')} | {row.get('עבודה','')}")
-            choices.append([str(i)])
-            indices.append(idx)
-        context.user_data["_edit_indices"] = indices
-        await update.message.reply_text(
-            "\n".join(lines),
-            reply_markup=ReplyKeyboardMarkup(choices, one_time_keyboard=True, resize_keyboard=True),
-        )
-        return EDIT_SELECT
-    except Exception as e:
-        await update.message.reply_text(f"שגיאה: {e}", reply_markup=_menu_markup())
-        return MENU
-
-
-async def bot_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    try:
-        n = int(text)
-        indices = context.user_data.get("_edit_indices", [])
-        if 1 <= n <= len(indices):
-            row_id = indices[n - 1]
-            df = load_data_from_gsheet()
-            row = df.iloc[row_id]
-            details = "\n".join(f"• {col}: {row.get(col, '')}" for col in COLUMNS)
-            await update.message.reply_text(
-                f"✏️ פרטי הרשומה:\n\n{details}\n\n🔗 לעריכה באתר:\n{WEB_APP_URL}/edit/{row_id}",
-                reply_markup=_menu_markup(),
-            )
-        else:
-            await update.message.reply_text("בחר מספר מהרשימה.", reply_markup=_menu_markup())
-    except ValueError:
-        await update.message.reply_text("בחר מספר מהרשימה.", reply_markup=_menu_markup())
-    context.user_data.pop("_edit_indices", None)
-    return MENU
-
-
-async def bot_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
-    try:
-        df = load_data_from_gsheet()
-        results = df[df["שם לקוח"].str.contains(query, case=False, na=False)]
-        if results.empty:
-            await update.message.reply_text(f"לא נמצאו תוצאות עבור '{query}'.", reply_markup=_menu_markup())
-        else:
-            lines = [f"🔍 נמצאו {len(results)} עבודות עבור '{query}':\n"]
-            for _, row in results.tail(10).iterrows():
-                lines.append(
-                    f"• {row.get('תאריך','')} | {row.get('עבודה','')} | "
-                    f"{row.get('שם חלקה','')} | {row.get('כמות','')}"
-                )
-            if len(results) > 10:
-                lines.append(f"\n...ועוד {len(results)-10} תוצאות נוספות")
-            await update.message.reply_text("\n".join(lines), reply_markup=_menu_markup())
-    except Exception as e:
-        await update.message.reply_text(f"שגיאה בחיפוש: {e}", reply_markup=_menu_markup())
-    return MENU
-
-
-async def client_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["שם לקוח"] = update.message.text.strip()
-    await update.message.reply_text("מה התאריך? (YYYY-MM-DD או 'היום')", reply_markup=ReplyKeyboardRemove())
-    return DATE
-
-
-async def date_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_input = update.message.text.strip()
-    if user_input.lower() == "היום":
-        context.user_data["תאריך"] = date.today().strftime("%Y-%m-%d")
-    else:
-        try:
-            pd.to_datetime(user_input, format="%Y-%m-%d")
-            context.user_data["תאריך"] = user_input
-        except ValueError:
-            await update.message.reply_text(
-                "פורמט תאריך שגוי. הכנס YYYY-MM-DD (לדוגמה 2025-06-15) או 'היום':"
-            )
-            return DATE
-    await update.message.reply_text(
-        "בחר סוג עבודה:",
-        reply_markup=ReplyKeyboardMarkup(TASK_CHOICES, one_time_keyboard=True, resize_keyboard=True),
-    )
-    return TASK
-
-
-async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["עבודה"] = update.message.text.strip()
-    await update.message.reply_text("מה שם החלקה?", reply_markup=ReplyKeyboardRemove())
-    return FIELD
-
-
-async def field(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["שם חלקה"] = update.message.text.strip()
-    await update.message.reply_text(
-        "מה הגידול בחלקה? (לדוגמה: חיטה, תירס, כותנה — או 'דלג')",
-        reply_markup=ReplyKeyboardMarkup([["דלג"]], one_time_keyboard=True, resize_keyboard=True),
-    )
-    return CROP
-
-
-async def crop_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data["גידול"] = "" if text == "דלג" else text
-    await update.message.reply_text("כמות (למשל 30 דונם):", reply_markup=ReplyKeyboardRemove())
-    return AMOUNT
-
-
-async def amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["כמות"] = update.message.text.strip()
-    await update.message.reply_text(
-        "כמה שעות עבודה? (ספרה או 'דלג')",
-        reply_markup=ReplyKeyboardMarkup([["דלג"]], one_time_keyboard=True, resize_keyboard=True),
-    )
-    return HOURS
-
-
-async def hours_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data["שעות"] = "" if text == "דלג" else text
-    await update.message.reply_text("איזה כלי שימש?", reply_markup=ReplyKeyboardRemove())
-    return TOOL
-
-
-async def tool(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["כלי"] = update.message.text.strip()
-    await update.message.reply_text("מי המפעיל?")
-    return OPERATOR
-
-
-async def operator_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["מפעיל"] = update.message.text.strip()
-    await update.message.reply_text(
-        "הערות (אם אין, לחץ על הכפתור):",
-        reply_markup=ReplyKeyboardMarkup(NOTES_KEYBOARD, one_time_keyboard=True, resize_keyboard=True),
-    )
-    return NOTE
-
-
-async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data["הערות"] = "" if text == "ללא הערות" else text
-    summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items() if not k.startswith("_"))
-    await update.message.reply_text(
-        f"סיכום לפני שמירה:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
-        reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
-    )
-    return CONFIRM
-
-
-async def note_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo = update.message.photo[-1]
-    context.user_data["הערות"] = f"[תמונה: {photo.file_id}]"
-    summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items() if not k.startswith("_"))
-    await update.message.reply_text(
-        f"📷 תמונה התקבלה.\n\nסיכום:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
-        reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
-    )
-    return CONFIRM
-
-
-async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.strip() == "כן":
-        try:
-            entry = WorkEntry.from_bot(context.user_data, update.message.from_user.full_name)
-            create_entry(entry, entry.entered_by)
-            await update.message.reply_text("✅ נשמר בהצלחה!")
-        except ValueError as e:
-            await update.message.reply_text(f"❌ שגיאת אימות: {e}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ שגיאה בשמירה: {e}")
-    else:
-        await update.message.reply_text("❌ בוטל.")
-    context.user_data.clear()
-    await update.message.reply_text("מה תרצה לעשות?", reply_markup=_menu_markup())
-    return MENU
-
-
-async def bot_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        df = load_data_from_gsheet()
-        if df.empty:
-            await update.message.reply_text("אין עבודות למחיקה.", reply_markup=_menu_markup())
-            return MENU
-        last = df.iloc[-1]
-        detail = f"{last.get('שם לקוח','')} | {last.get('תאריך','')} | {last.get('עבודה','')}"
-        last_idx = len(df) - 1
-        delete_row_in_gsheet(last_idx)
-        _log_audit("undo", update.message.from_user.full_name, detail)
-        await update.message.reply_text(f"✅ הרשומה האחרונה נמחקה:\n{detail}", reply_markup=_menu_markup())
-    except Exception as e:
-        await update.message.reply_text(f"❌ שגיאה: {e}", reply_markup=_menu_markup())
-    return MENU
-
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ביטול.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
-
-
-_telegram_app  = None
-_telegram_loop = None
-
-
-def start_telegram_bot():
-    global _telegram_app, _telegram_loop
-
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        print("❌ BOT_TOKEN not set — Telegram bot will not start")
-        return
-
-    print("[BOT] Thread starting...", flush=True)
-    try:
-        _telegram_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_telegram_loop)
-        tg = ApplicationBuilder().token(token).build()
-        print("[BOT] App built OK", flush=True)
-    except Exception as e:
-        print(f"[BOT] ERROR: {e}", flush=True)
-        import traceback; traceback.print_exc()
-        return
-
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start),
-        ],
-        states={
-            MENU:              [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
-            CLIENT:            [MessageHandler(filters.TEXT & ~filters.COMMAND, client_step)],
-            DATE:              [MessageHandler(filters.TEXT & ~filters.COMMAND, date_input)],
-            TASK:              [MessageHandler(filters.TEXT & ~filters.COMMAND, task)],
-            FIELD:             [MessageHandler(filters.TEXT & ~filters.COMMAND, field)],
-            CROP:              [MessageHandler(filters.TEXT & ~filters.COMMAND, crop_step)],
-            AMOUNT:            [MessageHandler(filters.TEXT & ~filters.COMMAND, amount)],
-            HOURS:             [MessageHandler(filters.TEXT & ~filters.COMMAND, hours_step)],
-            TOOL:              [MessageHandler(filters.TEXT & ~filters.COMMAND, tool)],
-            OPERATOR:          [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
-            NOTE:              [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, note),
-                MessageHandler(filters.PHOTO, note_photo),
-            ],
-            CONFIRM:           [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
-            SEARCH:            [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
-            EDIT_SELECT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_edit_select)],
-            REGISTER_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
-            REGISTER_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_password)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            CommandHandler("undo", bot_undo),
-            CommandHandler("start", start),
-        ],
-    )
-    tg.add_handler(conv)
-
-    async def _broadcast(subs, text):
-        for chat_id in subs:
-            try:
-                await tg.bot.send_message(chat_id=chat_id, text=text)
-            except Exception:
-                pass
-
-    async def _scheduled_reports():
-        sent = set()
-        while True:
-            await asyncio.sleep(1800)
-            now      = datetime.now()
-            date_str = now.strftime("%Y-%m-%d")
-            hour     = now.hour
-
-            # ── Morning reports at 08:00 ──────────────────────────────────────
-            if hour == 8 and (date_str, "morning") not in sent:
-                sent.add((date_str, "morning"))
-                sent = {k for k in sent if k[0] == date_str}
-                try:
-                    df   = load_data_from_gsheet()
-                    subs = _get_subscribers()
-                    if not subs:
-                        continue
-
-                    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-                    y_df = df[df["תאריך"] == yesterday]
-                    if not y_df.empty:
-                        y_df = y_df.copy()
-                        y_df["_שעות"] = pd.to_numeric(y_df["שעות"], errors="coerce").fillna(0)
-                        total_h = y_df["_שעות"].sum()
-                        lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות"]
-                        if total_h > 0:
-                            lines[0] += f" | {total_h:.1f} שעות"
-                        lines.append("")
-                        for _, row in y_df.iterrows():
-                            h = f" | {float(row['_שעות']):.1f}ש׳" if float(row['_שעות']) > 0 else ""
-                            lines.append(
-                                f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
-                                f"{row.get('שם חלקה','')} | {row.get('גידול','')}{h}"
-                            )
-                        await _broadcast(subs, "\n".join(lines))
-
-                    if now.weekday() == 0:
-                        week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-                        w_df = df[df["תאריך"] >= week_start].copy()
-                        if not w_df.empty:
-                            w_df["_שעות"] = pd.to_numeric(w_df["שעות"], errors="coerce").fillna(0)
-                            total_h = w_df["_שעות"].sum()
-                            top_clients = w_df["שם לקוח"].value_counts().head(3)
-                            lines = [f"📊 סיכום שבועי — {len(w_df)} עבודות | {total_h:.1f} שעות\n"]
-                            lines.append("👤 לקוחות מובילים:")
-                            for client, cnt in top_clients.items():
-                                lines.append(f"  • {client}: {cnt}")
-                            field_h = (
-                                w_df[w_df["_שעות"] > 0]
-                                .groupby("שם חלקה")["_שעות"].sum()
-                                .sort_values(ascending=False).head(5)
-                            )
-                            if not field_h.empty:
-                                lines.append("\n📍 שעות לפי חלקה:")
-                                for fn, h in field_h.items():
-                                    lines.append(f"  • {fn or 'לא צוין'}: {h:.1f}ש׳")
-                            crop_h = (
-                                w_df[w_df["_שעות"] > 0]
-                                .groupby("גידול")["_שעות"].sum()
-                                .sort_values(ascending=False).head(5)
-                            )
-                            if not crop_h.empty:
-                                lines.append("\n🌾 שעות לפי גידול:")
-                                for cn, h in crop_h.items():
-                                    lines.append(f"  • {cn or 'לא צוין'}: {h:.1f}ש׳")
-                            await _broadcast(subs, "\n".join(lines))
-
-                    if not df.empty:
-                        threshold = (now - timedelta(days=14)).strftime("%Y-%m-%d")
-                        last_per_client = df.groupby("שם לקוח")["תאריך"].max()
-                        inactive = last_per_client[last_per_client < threshold]
-                        if not inactive.empty:
-                            lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים:\n"]
-                            for client_name, last_dt in inactive.items():
-                                lines.append(f"• {client_name} (אחרון: {last_dt})")
-                            await _broadcast(subs, "\n".join(lines))
-                except Exception as e:
-                    print(f"[BOT] Morning report error: {e}")
-
-            # ── Evening worker reminder at 18:00 ─────────────────────────────
-            if hour == 18 and (date_str, "evening") not in sent:
-                sent.add((date_str, "evening"))
-                try:
-                    subs = _get_subscribers()
-                    if subs:
-                        msg = (
-                            f"📋 תזכורת סוף יום — {date_str}\n\n"
-                            "אל תשכח לדווח על שעות העבודה שלך היום!\n"
-                            f"🔗 {WEB_APP_URL}/worker\n\n"
-                            "לדיווח דרך הבוט — שלח 'הזן עבודה חדשה'"
-                        )
-                        await _broadcast(subs, msg)
-                except Exception as e:
-                    print(f"[BOT] Evening reminder error: {e}")
-
-    async def _run():
-        global _telegram_app
-        _telegram_app = tg
-        await tg.initialize()
-        await tg.start()
-        asyncio.create_task(_scheduled_reports())
-
-        # Use webhook if WEB_APP_URL is explicitly set; fall back to polling
-        explicit_url = os.environ.get("WEB_APP_URL")
-        if explicit_url:
-            webhook_url = f"{explicit_url}/webhook/{token}"
-            try:
-                await tg.bot.set_webhook(webhook_url)
-                print(f"[BOT] Webhook set: {webhook_url}", flush=True)
-                await asyncio.Event().wait()
-            except Exception as e:
-                print(f"[BOT] Webhook failed ({e}), falling back to polling", flush=True)
-                await tg.updater.start_polling()
-                await asyncio.Event().wait()
-        else:
-            await tg.updater.start_polling()
-            await asyncio.Event().wait()
-
-    _telegram_loop.run_until_complete(_run())
-
-
-# ── Flask App ──────────────────────────────────────────────────────────────────
+from urllib.parse import urlencode
+
+import pandas as pd
+from flask import (Flask, flash, jsonify, redirect, render_template,
+                   request, send_file, session, url_for)
+
+import gadash.bot as _bot_module
+from gadash.audit import _flush_audit_to_sheets, _log_audit, _read_audit_log
+from gadash.bot import start_telegram_bot
+from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
+from gadash.service import create_entry
+from gadash.sheets import (
+    _invalidate_cache, _load_field_coords, _save_field_coord,
+    append_row_to_gsheet, bulk_delete_rows_in_gsheet,
+    delete_row_in_gsheet, edit_row_in_gsheet,
+    load_data_from_gsheet, load_passwords_from_sheet,
+    patch_cell_in_gsheet, save_data_to_gsheet,
+    save_passwords_to_sheet,
+)
+from gadash.workers import (
+    _add_worker, _delete_worker, _load_workers,
+    _verify_worker,
+)
+
+PAGE_SIZE = 50
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
@@ -1154,18 +40,21 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 _current_password = os.environ.get("WEB_PASSWORD", "gadash2025")
 _worker_password  = os.environ.get("WORKER_PASSWORD", "worker2025")
 
-# Load persisted passwords from Google Sheets (overrides env vars if saved before)
 try:
-    _load_passwords()
+    saved = load_passwords_from_sheet()
+    if saved.get("web_password"):
+        _current_password = saved["web_password"]
+    if saved.get("worker_password"):
+        _worker_password = saved["worker_password"]
 except Exception:
     pass
 
-# ── CSRF (manual, no extra dependency needed) ──────────────────────────────────
 
 def _get_csrf_token() -> str:
     if "_csrf" not in session:
         session["_csrf"] = secrets.token_hex(32)
     return session["_csrf"]
+
 
 app.jinja_env.globals["csrf_token"] = _get_csrf_token
 
@@ -1190,8 +79,8 @@ def _csrf_protect():
 # ── Rate limiter on login ──────────────────────────────────────────────────────
 
 _login_attempts: dict = {}
-_LOGIN_MAX  = 5
-_LOGIN_WINDOW = 60  # seconds
+_LOGIN_MAX    = 5
+_LOGIN_WINDOW = 60
 
 
 def _check_rate_limit(ip: str) -> bool:
@@ -1205,7 +94,7 @@ def _record_attempt(ip: str):
     _login_attempts.setdefault(ip, []).append(time.time())
 
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
+# ── Auth decorators ────────────────────────────────────────────────────────────
 
 def login_required(f):
     @wraps(f)
@@ -1225,6 +114,8 @@ def worker_required(f):
     return decorated
 
 
+# ── Auth routes ────────────────────────────────────────────────────────────────
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if session.get("logged_in"):
@@ -1242,7 +133,6 @@ def login():
         if role == "worker":
             name = request.form.get("name", "").strip() or "עובד"
             workers = _load_workers()
-            # Individual accounts take priority; fall back to shared password
             if workers:
                 ok = _verify_worker(name, pwd)
             else:
@@ -1267,19 +157,20 @@ def login():
     return render_template("login.html", selected_role="manager")
 
 
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/health")
 def health():
+    from gadash.sheets import _get_sheet
     try:
         _get_sheet()
         return jsonify({"status": "ok", "sheets": "connected"})
     except Exception as e:
         return jsonify({"status": "degraded", "sheets": str(e)}), 503
-
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("login"))
 
 
 @app.route("/change-password", methods=["GET", "POST"])
@@ -1298,12 +189,12 @@ def change_password():
             flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
         else:
             _current_password = new1
-            _save_passwords()
+            save_passwords_to_sheet(_current_password, _worker_password)
             flash("הסיסמה שונתה בהצלחה ✅", "success")
     return render_template("change_password.html")
 
 
-# ── Filters helper ─────────────────────────────────────────────────────────────
+# ── Shared filter helper ───────────────────────────────────────────────────────
 
 def _apply_filters(df):
     q         = request.args.get("q",         "").strip()
@@ -1339,7 +230,7 @@ def _autocomplete_lists(df: pd.DataFrame) -> dict:
     }
 
 
-# ── Web routes ─────────────────────────────────────────────────────────────────
+# ── Manager routes ─────────────────────────────────────────────────────────────
 
 @app.route("/")
 @login_required
@@ -1395,7 +286,11 @@ def index():
             month_count=0, top_client="—", top_task="—",
             q_filter="", client_filter="", date_from="", date_to="", task_filter="",
             task_options=[], task_counts={}, client_counts={},
-            page=1, total_pages=1, error=str(e),
+            page=1, total_pages=1,
+            today=date.today().strftime("%Y-%m-%d"),
+            client_list=[], field_list=[], crop_list=[],
+            operator_list=[], tool_list=[],
+            error=str(e),
         )
 
 
@@ -1669,8 +564,6 @@ def delete_worker(name):
     return redirect(url_for("manage_workers"))
 
 
-# ── Cache invalidation ─────────────────────────────────────────────────────────
-
 @app.route("/api/cache/invalidate", methods=["POST"])
 @login_required
 def api_cache_invalidate():
@@ -1680,15 +573,15 @@ def api_cache_invalidate():
 
 @app.route("/webhook/<token>", methods=["POST"])
 def telegram_webhook(token):
-    if not _telegram_app or token != os.environ.get("BOT_TOKEN"):
+    if not _bot_module._telegram_app or token != os.environ.get("BOT_TOKEN"):
         return "forbidden", 403
     data = request.get_json(force=True, silent=True)
-    if data and _telegram_loop:
+    if data and _bot_module._telegram_loop:
         from telegram import Update as TGUpdate
-        update = TGUpdate.de_json(data, _telegram_app.bot)
+        update = TGUpdate.de_json(data, _bot_module._telegram_app.bot)
         asyncio.run_coroutine_threadsafe(
-            _telegram_app.process_update(update),
-            _telegram_loop,
+            _bot_module._telegram_app.process_update(update),
+            _bot_module._telegram_loop,
         )
     return "ok"
 
@@ -1722,7 +615,7 @@ def worker_change_password():
         flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
     else:
         _worker_password = new1
-        _save_passwords()
+        save_passwords_to_sheet(_current_password, _worker_password)
         flash("הסיסמה שונתה בהצלחה ✅", "success")
     return redirect(url_for("worker_index"))
 
@@ -1749,7 +642,6 @@ def worker_index():
             flash(f"שגיאה בשמירה: {e} ❌", "danger")
         return redirect(url_for("worker_index"))
 
-    # Show only this worker's recent entries
     try:
         df = load_data_from_gsheet()
         my_df = df[df["מזין"].str.contains(worker_name, case=False, na=False)]
@@ -1763,12 +655,14 @@ def worker_index():
                            recent=recent, my_count=my_count, **lists)
 
 
+# ── Reports ────────────────────────────────────────────────────────────────────
+
 @app.route("/client-report")
 @login_required
 def client_report():
-    client_name  = request.args.get("client", "").strip()
-    date_from    = request.args.get("date_from", "").strip()
-    date_to      = request.args.get("date_to", "").strip()
+    client_name = request.args.get("client", "").strip()
+    date_from   = request.args.get("date_from", "").strip()
+    date_to     = request.args.get("date_to", "").strip()
     try:
         df = load_data_from_gsheet()
         auto = _autocomplete_lists(df)
@@ -1854,27 +748,18 @@ def field_report():
         fdf["גידול_label"] = fdf["גידול"].fillna("").replace("", "לא צוין")
         fdf["שם חלקה_label"] = fdf["שם חלקה"].fillna("").replace("", "לא צוין")
 
-        # Totals per field
         field_totals = (
             fdf.groupby("שם חלקה_label")
             .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
-            .reset_index()
-            .rename(columns={"שם חלקה_label": "שם חלקה"})
-            .sort_values("שעות", ascending=False)
-            .to_dict(orient="records")
+            .reset_index().rename(columns={"שם חלקה_label": "שם חלקה"})
+            .sort_values("שעות", ascending=False).to_dict(orient="records")
         )
-
-        # Totals per crop
         crop_totals = (
             fdf.groupby("גידול_label")
             .agg(עבודות=("שם לקוח", "count"), שעות=("_שעות", "sum"))
-            .reset_index()
-            .rename(columns={"גידול_label": "גידול"})
-            .sort_values("שעות", ascending=False)
-            .to_dict(orient="records")
+            .reset_index().rename(columns={"גידול_label": "גידול"})
+            .sort_values("שעות", ascending=False).to_dict(orient="records")
         )
-
-        # Pivot: field × crop → hours
         pivot = fdf.pivot_table(
             index="שם חלקה_label", columns="גידול_label",
             values="_שעות", aggfunc="sum", fill_value=0
@@ -1883,21 +768,14 @@ def field_report():
         pivot["סה\"כ"] = pivot.sum(axis=1)
         pivot = pivot.reset_index().rename(columns={"שם חלקה_label": "שם חלקה"})
         crop_pivot = pivot.to_dict(orient="records")
-
         total_hours = float(fdf["_שעות"].sum())
-
         auto = _autocomplete_lists(df)
         return render_template(
             "field_report.html",
-            crop_pivot=crop_pivot,
-            crops=crops,
-            field_totals=field_totals,
-            crop_totals=crop_totals,
-            total_hours=total_hours,
-            date_from=date_from,
-            date_to=date_to,
-            client_filter=client_filter,
-            **auto,
+            crop_pivot=crop_pivot, crops=crops,
+            field_totals=field_totals, crop_totals=crop_totals,
+            total_hours=total_hours, date_from=date_from, date_to=date_to,
+            client_filter=client_filter, **auto,
         )
     except Exception as e:
         return render_template("field_report.html",
@@ -1957,7 +835,7 @@ def field_report_print():
         return f"שגיאה: {e}"
 
 
-# ── AI Summary ────────────────────────────────────────────────────────────────
+# ── AI Summary ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/ai-summary", methods=["POST"])
 @login_required
@@ -1996,7 +874,6 @@ def api_ai_summary():
         }
 
         gemini_key = os.environ.get("GEMINI_API_KEY")
-
         if gemini_key:
             prompt = f"""אתה מנהל חקלאי מנוסה. כתוב סיכום חודשי מקצועי בעברית (5-6 משפטים בלבד) בהתבסס על:
 
@@ -2042,7 +919,7 @@ def api_ai_summary():
         return jsonify({"error": str(e)}), 500
 
 
-# ── Field map ─────────────────────────────────────────────────────────────────
+# ── Field map ──────────────────────────────────────────────────────────────────
 
 @app.route("/fields-map")
 @login_required
@@ -2065,9 +942,9 @@ def api_fields():
 
         result = []
         for field_name, grp in df.groupby("שם חלקה"):
-            crops = grp["גידול"].dropna().replace("", None).dropna()
+            crops   = grp["גידול"].dropna().replace("", None).dropna()
             clients = grp["שם לקוח"].dropna()
-            dates = grp["תאריך"].dropna()
+            dates   = grp["תאריך"].dropna()
             result.append({
                 "name":      field_name,
                 "hours":     round(float(grp["_שעות"].sum()), 1),
@@ -2098,7 +975,7 @@ def api_fields_coords():
         return jsonify({"error": str(e)}), 500
 
 
-# ── Dashboard API ─────────────────────────────────────────────────────────────
+# ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/dashboard")
 @login_required
@@ -2132,7 +1009,6 @@ def api_dashboard():
         date_from = request.args.get("from", "")
         date_to   = request.args.get("to",   "")
 
-        # Month-over-month KPIs always computed on full dataset
         now          = datetime.now()
         cur_m, cur_y = now.month, now.year
         prev_m       = cur_m - 1 if cur_m > 1 else 12
@@ -2145,7 +1021,6 @@ def api_dashboard():
         this_m["_h"] = pd.to_numeric(this_m["שעות"], errors="coerce").fillna(0)
         last_m["_h"] = pd.to_numeric(last_m["שעות"], errors="coerce").fillna(0)
 
-        # Apply date range filter for chart data
         cdf = df.copy()
         if date_from:
             cdf = cdf[cdf["תאריך"] >= date_from]
@@ -2168,7 +1043,6 @@ def api_dashboard():
                          if (cdf["_h"] > 0).any() else 0.0,
         }
 
-        # Daily trend (last 60 days of filtered range)
         cdf_v = cdf.dropna(subset=["_d"]).copy()
         daily = (
             cdf_v.groupby(cdf_v["_d"].dt.strftime("%Y-%m-%d"))
@@ -2178,10 +1052,8 @@ def api_dashboard():
         )
         daily["hours"] = daily["hours"].round(1)
 
-        # Task distribution
         task_dist = cdf["עבודה"].value_counts().to_dict()
 
-        # Top 10 clients by entry count
         top_clients = (
             cdf.groupby("שם לקוח")
             .agg(count=("עבודה", "count"), hours=("_h", "sum"))
@@ -2191,7 +1063,6 @@ def api_dashboard():
         )
         top_clients["hours"] = top_clients["hours"].round(1)
 
-        # Top 10 fields by hours
         fdf = cdf[cdf["שם חלקה"].fillna("").str.strip() != ""]
         top_fields = (
             fdf.groupby("שם חלקה")
@@ -2202,7 +1073,6 @@ def api_dashboard():
         )
         top_fields["hours"] = top_fields["hours"].round(1)
 
-        # Crop hours (top 8)
         crp = cdf[cdf["גידול"].fillna("").str.strip() != ""]
         crop_h = (
             crp.groupby("גידול")["_h"].sum()
@@ -2212,7 +1082,6 @@ def api_dashboard():
         )
         crop_h["hours"] = crop_h["hours"].round(1)
 
-        # Monthly trend (last 12 months in range)
         cdf_v["_month"] = cdf_v["_d"].dt.strftime("%Y-%m")
         monthly = (
             cdf_v.groupby("_month")
@@ -2236,9 +1105,8 @@ def api_dashboard():
         return jsonify({"error": str(e)}), 500
 
 
-# ── Start bot thread ───────────────────────────────────────────────────────────
+# ── Background threads & entry point ──────────────────────────────────────────
 
-# Start background audit flush thread
 _audit_flush_thread = threading.Thread(target=_flush_audit_to_sheets, daemon=True)
 _audit_flush_thread.start()
 
