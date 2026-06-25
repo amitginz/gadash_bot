@@ -71,7 +71,7 @@
                 </td>
                 <td class="text-start">
                   <form method="POST" action="/workers/delete/{{ w['שם'] }}"
-                        onsubmit="return confirm('למחוק את העובד {{ w[\"שם\"] }}?')">
+                        onsubmit="return confirm('למחוק את העובד {{ w['שם']|e }}?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-sm btn-outline-danger">
                       <i class="bi bi-trash3"></i>
