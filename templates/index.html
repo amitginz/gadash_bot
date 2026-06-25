@@ -737,9 +737,20 @@
     });
   }
 
-  // Advanced filter panel toggle
+  // Advanced filter panel toggle — opens always; closes only when no filter values are filled
   document.getElementById('toggleFilters')?.addEventListener('click', () => {
-    document.getElementById('advFilters')?.classList.toggle('d-none');
+    const panel = document.getElementById('advFilters');
+    if (!panel) return;
+    if (panel.classList.contains('d-none')) {
+      panel.classList.remove('d-none');
+    } else {
+      const ff = document.getElementById('filterForm');
+      const hasValues = ff && ['client','date_from','date_to','task'].some(k => {
+        const el = ff.querySelector(`[name="${k}"]`);
+        return el && el.value.trim();
+      });
+      if (!hasValues) panel.classList.add('d-none');
+    }
   });
 
   // Filter memory — persist to localStorage, restore when advanced filters are absent from URL
