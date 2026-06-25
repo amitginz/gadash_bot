@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta
 import gspread
 import asyncio
 import threading
+import hashlib
+import collections
 from google.oauth2.service_account import Credentials
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -21,7 +23,7 @@ PAGE_SIZE        = 50
 SUBSCRIBERS_FILE = "subscribers.json"
 AUDIT_LOG_FILE   = "audit.log"
 
-MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT = range(14)
+MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT, REGISTER_NAME, REGISTER_PASSWORD = range(16)
 
 TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
@@ -127,7 +129,7 @@ _gs_client  = None
 _gs_lock    = threading.Lock()
 _cache_data = None
 _cache_time = 0.0
-_CACHE_TTL  = 30
+_CACHE_TTL  = 300
 
 
 def _invalidate_cache():
@@ -201,6 +203,57 @@ def _get_fieldcoords_sheet():
             except gspread.WorksheetNotFound:
                 ws = wb.add_worksheet("FieldCoords", rows=200, cols=3)
                 ws.append_row(["שם חלקה", "lat", "lng"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _get_audit_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("AuditLog")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("AuditLog", rows=2000, cols=4)
+                ws.append_row(["ts", "action", "user", "detail"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _get_subscribers_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Subscribers")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Subscribers", rows=200, cols=1)
+                ws.append_row(["chat_id"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _get_workers_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Workers")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Workers", rows=200, cols=3)
+                ws.append_row(["שם", "password_hash", "telegram_id"])
                 return ws
         except Exception:
             _gs_client = None
@@ -303,6 +356,48 @@ def append_row_to_gsheet(entry: WorkEntry):
     _invalidate_cache()
 
 
+_N_COLS = len(COLUMNS)  # 11 → column K
+
+
+def edit_row_in_gsheet(row_id: int, entry: WorkEntry):
+    """Update a single row in place — no full rewrite."""
+    sheet = _get_sheet()
+    sheet_row = row_id + 2  # 1-based + header offset
+    end_col = chr(64 + _N_COLS)
+    sheet.update([entry.to_sheet_row()], f"A{sheet_row}:{end_col}{sheet_row}",
+                 value_input_option="USER_ENTERED")
+    _invalidate_cache()
+
+
+def delete_row_in_gsheet(row_id: int):
+    """Delete a single row by its 0-based DataFrame index."""
+    sheet = _get_sheet()
+    sheet.delete_rows(row_id + 2)
+    _invalidate_cache()
+
+
+def bulk_delete_rows_in_gsheet(row_ids: list):
+    """Delete multiple rows — bottom-up so indices stay valid."""
+    sheet = _get_sheet()
+    for df_idx in sorted(row_ids, reverse=True):
+        sheet.delete_rows(df_idx + 2)
+    _invalidate_cache()
+
+
+def patch_cell_in_gsheet(row_id: int, field: str, value: str):
+    """Update a single cell — used by inline PATCH."""
+    sheet = _get_sheet()
+    col_idx = COLUMNS.index(field) + 1  # 1-based
+    sheet.update_cell(row_id + 2, col_idx, value)
+    _invalidate_cache()
+
+
+def create_entry(entry: WorkEntry, actor: str):
+    """Single point for adding a new work entry — used by both web and bot."""
+    append_row_to_gsheet(entry)
+    _log_audit("add", actor, f"{entry.client} | {entry.date} | {entry.task}")
+
+
 def save_data_to_gsheet(df: pd.DataFrame):
     sheet = _get_sheet()
     sheet.clear()
@@ -315,57 +410,185 @@ def save_data_to_gsheet(df: pd.DataFrame):
 
 # ── Audit log ──────────────────────────────────────────────────────────────────
 
-_audit_lock = threading.Lock()
+_audit_lock       = threading.Lock()
+_audit_queue      = collections.deque()
+_audit_queue_lock = threading.Lock()
 
 
 def _log_audit(action: str, user: str, detail: str):
-    entry = json.dumps({
-        "ts":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "action": action,
-        "user":   user,
-        "detail": detail,
-    }, ensure_ascii=False)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Local file for fast reads within the same process lifetime
+    entry_json = json.dumps({"ts": ts, "action": action, "user": user, "detail": detail},
+                            ensure_ascii=False)
     with _audit_lock:
         try:
             with open(AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(entry + "\n")
+                f.write(entry_json + "\n")
         except Exception:
             pass
+    # Queue for Sheets persistence (flushed by background thread)
+    with _audit_queue_lock:
+        _audit_queue.append([ts, action, user, detail])
 
 
 def _read_audit_log(limit: int = 200) -> list:
-    if not os.path.exists(AUDIT_LOG_FILE):
-        return []
+    # Prefer local file (fast); fall back to Sheets after restart
+    if os.path.exists(AUDIT_LOG_FILE):
+        try:
+            with _audit_lock:
+                with open(AUDIT_LOG_FILE, encoding="utf-8") as f:
+                    lines = f.readlines()
+            entries = [json.loads(l) for l in lines if l.strip()]
+            if entries:
+                return list(reversed(entries[-limit:]))
+        except Exception:
+            pass
+    # Fallback: read from Sheets
     try:
-        with _audit_lock:
-            with open(AUDIT_LOG_FILE, encoding="utf-8") as f:
-                lines = f.readlines()
-        entries = [json.loads(l) for l in lines if l.strip()]
-        return list(reversed(entries[-limit:]))
+        ws = _get_audit_sheet()
+        if ws:
+            rows = ws.get_all_values()
+            entries = [{"ts": r[0], "action": r[1], "user": r[2], "detail": r[3]}
+                       for r in rows[1:] if len(r) >= 4]
+            return list(reversed(entries[-limit:]))
     except Exception:
-        return []
+        pass
+    return []
 
 
-# ── Subscriber management ──────────────────────────────────────────────────────
+def _flush_audit_to_sheets():
+    """Background thread: flush queued audit rows to Sheets every 30 s."""
+    while True:
+        time.sleep(30)
+        with _audit_queue_lock:
+            if not _audit_queue:
+                continue
+            rows = list(_audit_queue)
+            _audit_queue.clear()
+        try:
+            ws = _get_audit_sheet()
+            if ws:
+                ws.append_rows(rows, value_input_option="USER_ENTERED")
+        except Exception as e:
+            print(f"[Audit] flush error: {e}")
+
+
+# ── Subscriber management (Sheets-backed) ─────────────────────────────────────
+
+_subscribers_cache: set | None = None
+_subscribers_lock = threading.Lock()
+
 
 def _get_subscribers() -> set:
+    global _subscribers_cache
+    with _subscribers_lock:
+        if _subscribers_cache is not None:
+            return set(_subscribers_cache)
     try:
-        if os.path.exists(SUBSCRIBERS_FILE):
-            with open(SUBSCRIBERS_FILE) as f:
-                return set(json.load(f))
+        ws = _get_subscribers_sheet()
+        if ws:
+            rows = ws.get_all_values()
+            subs = {int(r[0]) for r in rows[1:] if r and r[0].lstrip("-").isdigit()}
+            with _subscribers_lock:
+                _subscribers_cache = subs
+            return set(subs)
     except Exception:
         pass
     return set()
 
 
 def _add_subscriber(chat_id: int):
+    global _subscribers_cache
     subs = _get_subscribers()
+    if chat_id in subs:
+        return
     subs.add(chat_id)
+    with _subscribers_lock:
+        _subscribers_cache = subs
     try:
-        with open(SUBSCRIBERS_FILE, "w") as f:
-            json.dump(list(subs), f)
+        ws = _get_subscribers_sheet()
+        if ws:
+            ws.append_row([str(chat_id)])
+    except Exception as e:
+        print(f"[Subscribers] save error: {e}")
+
+
+# ── Worker accounts ────────────────────────────────────────────────────────────
+
+def _hash_pw(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _load_workers() -> list:
+    """Returns [{שם, password_hash, telegram_id}]."""
+    try:
+        ws = _get_workers_sheet()
+        if not ws:
+            return []
+        rows = ws.get_all_values()
+        return [
+            {"שם": r[0],
+             "password_hash": r[1] if len(r) > 1 else "",
+             "telegram_id":   r[2] if len(r) > 2 else ""}
+            for r in rows[1:] if r and r[0]
+        ]
+    except Exception:
+        return []
+
+
+def _verify_worker(name: str, password: str) -> bool:
+    ph = _hash_pw(password)
+    return any(w["שם"] == name and w["password_hash"] == ph for w in _load_workers())
+
+
+def _add_worker(name: str, password: str) -> bool:
+    workers = _load_workers()
+    if any(w["שם"] == name for w in workers):
+        return False
+    try:
+        ws = _get_workers_sheet()
+        if ws:
+            ws.append_row([name, _hash_pw(password), ""])
+            return True
     except Exception:
         pass
+    return False
+
+
+def _delete_worker(name: str) -> bool:
+    try:
+        ws = _get_workers_sheet()
+        if not ws:
+            return False
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == name:
+                ws.delete_rows(i)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _get_worker_by_telegram_id(telegram_id: int) -> dict | None:
+    tid = str(telegram_id)
+    return next((w for w in _load_workers() if w.get("telegram_id") == tid), None)
+
+
+def _link_worker_telegram(name: str, telegram_id: int) -> bool:
+    """Store telegram_id on the worker's row."""
+    try:
+        ws = _get_workers_sheet()
+        if not ws:
+            return False
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == name:
+                ws.update_cell(i, 3, str(telegram_id))
+                return True
+    except Exception:
+        pass
+    return False
 
 
 # ── Telegram Bot ───────────────────────────────────────────────────────────────
@@ -393,7 +616,28 @@ def _recent_clients_markup():
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _add_subscriber(update.message.chat_id)
+    tid = update.message.from_user.id
+    workers = _load_workers()
+    if workers:
+        worker = _get_worker_by_telegram_id(tid)
+        if worker:
+            context.user_data["_worker_name"] = worker["שם"]
+            _add_subscriber(tid)
+            await update.message.reply_text(
+                f'שלום {worker["שם"]}! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
+                reply_markup=_menu_markup(),
+            )
+            return MENU
+        else:
+            await update.message.reply_text(
+                f"ברוך הבא! עליך להירשם.\nהכנס את שם המשתמש שלך (המופיע במערכת):\n\n"
+                f"_(מזהה Telegram שלך: `{tid}`)_",
+                parse_mode="Markdown",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return REGISTER_NAME
+    # No workers configured — allow anyone (legacy mode)
+    _add_subscriber(tid)
     await update.message.reply_text(
         'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
         reply_markup=_menu_markup(),
@@ -402,8 +646,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def ask_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _add_subscriber(update.message.chat_id)
+    tid = update.message.from_user.id
+    workers = _load_workers()
+    if workers and not _get_worker_by_telegram_id(tid):
+        return await start(update, context)
+    _add_subscriber(tid)
     return await _handle_menu(update, context, update.message.text.strip())
+
+
+async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    workers = _load_workers()
+    if not any(w["שם"] == name for w in workers):
+        await update.message.reply_text("שם לא נמצא במערכת. פנה למנהל לרישום.")
+        return ConversationHandler.END
+    context.user_data["_reg_name"] = name
+    await update.message.reply_text("הכנס סיסמה:")
+    return REGISTER_PASSWORD
+
+
+async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pwd  = update.message.text.strip()
+    name = context.user_data.get("_reg_name", "")
+    if _verify_worker(name, pwd):
+        _link_worker_telegram(name, update.message.from_user.id)
+        context.user_data["_worker_name"] = name
+        _add_subscriber(update.message.from_user.id)
+        await update.message.reply_text(
+            f"✅ נרשמת בהצלחה כ-{name}!\nמה תרצה לעשות?",
+            reply_markup=_menu_markup(),
+        )
+        return MENU
+    await update.message.reply_text("סיסמה שגויה. נסה שוב או פנה למנהל.")
+    return ConversationHandler.END
 
 
 async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -627,7 +902,7 @@ async def operator_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     context.user_data["הערות"] = "" if text == "ללא הערות" else text
-    summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items())
+    summary = "\n".join(f"• {k}: {v}" for k, v in context.user_data.items() if not k.startswith("_"))
     await update.message.reply_text(
         f"סיכום לפני שמירה:\n\n{summary}\n\nלחץ כן לשמירה או לא לביטול.",
         reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
@@ -650,8 +925,7 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         try:
             entry = WorkEntry.from_bot(context.user_data, update.message.from_user.full_name)
-            append_row_to_gsheet(entry)
-            _log_audit("add", entry.entered_by, f"{entry.client} | {entry.date} | {entry.task}")
+            create_entry(entry, entry.entered_by)
             await update.message.reply_text("✅ נשמר בהצלחה!")
         except ValueError as e:
             await update.message.reply_text(f"❌ שגיאת אימות: {e}")
@@ -672,7 +946,8 @@ async def bot_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MENU
         last = df.iloc[-1]
         detail = f"{last.get('שם לקוח','')} | {last.get('תאריך','')} | {last.get('עבודה','')}"
-        save_data_to_gsheet(df.iloc[:-1].reset_index(drop=True))
+        last_idx = len(df) - 1
+        delete_row_in_gsheet(last_idx)
         _log_audit("undo", update.message.from_user.full_name, detail)
         await update.message.reply_text(f"✅ הרשומה האחרונה נמחקה:\n{detail}", reply_markup=_menu_markup())
     except Exception as e:
@@ -685,7 +960,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+_telegram_app  = None
+_telegram_loop = None
+
+
 def start_telegram_bot():
+    global _telegram_app, _telegram_loop
+
     token = os.getenv("BOT_TOKEN")
     if not token:
         print("❌ BOT_TOKEN not set — Telegram bot will not start")
@@ -693,9 +974,9 @@ def start_telegram_bot():
 
     print("[BOT] Thread starting...", flush=True)
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        telegram_app = ApplicationBuilder().token(token).build()
+        _telegram_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_telegram_loop)
+        tg = ApplicationBuilder().token(token).build()
         print("[BOT] App built OK", flush=True)
     except Exception as e:
         print(f"[BOT] ERROR: {e}", flush=True)
@@ -708,23 +989,25 @@ def start_telegram_bot():
             MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start),
         ],
         states={
-            MENU:     [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
-            CLIENT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, client_step)],
-            DATE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, date_input)],
-            TASK:     [MessageHandler(filters.TEXT & ~filters.COMMAND, task)],
-            FIELD:    [MessageHandler(filters.TEXT & ~filters.COMMAND, field)],
-            CROP:     [MessageHandler(filters.TEXT & ~filters.COMMAND, crop_step)],
-            AMOUNT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, amount)],
-            HOURS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, hours_step)],
-            TOOL:     [MessageHandler(filters.TEXT & ~filters.COMMAND, tool)],
-            OPERATOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
-            NOTE:     [
+            MENU:              [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
+            CLIENT:            [MessageHandler(filters.TEXT & ~filters.COMMAND, client_step)],
+            DATE:              [MessageHandler(filters.TEXT & ~filters.COMMAND, date_input)],
+            TASK:              [MessageHandler(filters.TEXT & ~filters.COMMAND, task)],
+            FIELD:             [MessageHandler(filters.TEXT & ~filters.COMMAND, field)],
+            CROP:              [MessageHandler(filters.TEXT & ~filters.COMMAND, crop_step)],
+            AMOUNT:            [MessageHandler(filters.TEXT & ~filters.COMMAND, amount)],
+            HOURS:             [MessageHandler(filters.TEXT & ~filters.COMMAND, hours_step)],
+            TOOL:              [MessageHandler(filters.TEXT & ~filters.COMMAND, tool)],
+            OPERATOR:          [MessageHandler(filters.TEXT & ~filters.COMMAND, operator_step)],
+            NOTE:              [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, note),
                 MessageHandler(filters.PHOTO, note_photo),
             ],
-            CONFIRM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
-            SEARCH:   [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
-            EDIT_SELECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_edit_select)],
+            CONFIRM:           [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
+            SEARCH:            [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
+            EDIT_SELECT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_edit_select)],
+            REGISTER_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
+            REGISTER_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_password)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
@@ -732,22 +1015,22 @@ def start_telegram_bot():
             CommandHandler("start", start),
         ],
     )
-    telegram_app.add_handler(conv)
+    tg.add_handler(conv)
 
     async def _broadcast(subs, text):
         for chat_id in subs:
             try:
-                await telegram_app.bot.send_message(chat_id=chat_id, text=text)
+                await tg.bot.send_message(chat_id=chat_id, text=text)
             except Exception:
                 pass
 
     async def _scheduled_reports():
-        sent = set()  # (date_str, event_name)
+        sent = set()
         while True:
-            await asyncio.sleep(1800)  # check every 30 minutes
-            now  = datetime.now()
+            await asyncio.sleep(1800)
+            now      = datetime.now()
             date_str = now.strftime("%Y-%m-%d")
-            hour = now.hour
+            hour     = now.hour
 
             # ── Morning reports at 08:00 ──────────────────────────────────────
             if hour == 8 and (date_str, "morning") not in sent:
@@ -759,7 +1042,6 @@ def start_telegram_bot():
                     if not subs:
                         continue
 
-                    # Daily summary
                     yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
                     y_df = df[df["תאריך"] == yesterday]
                     if not y_df.empty:
@@ -778,7 +1060,6 @@ def start_telegram_bot():
                             )
                         await _broadcast(subs, "\n".join(lines))
 
-                    # Weekly summary every Monday
                     if now.weekday() == 0:
                         week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
                         w_df = df[df["תאריך"] >= week_start].copy()
@@ -790,7 +1071,6 @@ def start_telegram_bot():
                             lines.append("👤 לקוחות מובילים:")
                             for client, cnt in top_clients.items():
                                 lines.append(f"  • {client}: {cnt}")
-                            # Hours by field
                             field_h = (
                                 w_df[w_df["_שעות"] > 0]
                                 .groupby("שם חלקה")["_שעות"].sum()
@@ -800,7 +1080,6 @@ def start_telegram_bot():
                                 lines.append("\n📍 שעות לפי חלקה:")
                                 for fn, h in field_h.items():
                                     lines.append(f"  • {fn or 'לא צוין'}: {h:.1f}ש׳")
-                            # Hours by crop
                             crop_h = (
                                 w_df[w_df["_שעות"] > 0]
                                 .groupby("גידול")["_שעות"].sum()
@@ -812,7 +1091,6 @@ def start_telegram_bot():
                                     lines.append(f"  • {cn or 'לא צוין'}: {h:.1f}ש׳")
                             await _broadcast(subs, "\n".join(lines))
 
-                    # Inactive client reminders — no entry in 14 days
                     if not df.empty:
                         threshold = (now - timedelta(days=14)).strftime("%Y-%m-%d")
                         last_per_client = df.groupby("שם לקוח")["תאריך"].max()
@@ -842,13 +1120,29 @@ def start_telegram_bot():
                     print(f"[BOT] Evening reminder error: {e}")
 
     async def _run():
+        global _telegram_app
+        _telegram_app = tg
+        await tg.initialize()
+        await tg.start()
         asyncio.create_task(_scheduled_reports())
-        async with telegram_app:
-            await telegram_app.updater.start_polling()
-            await telegram_app.start()
+
+        # Use webhook if WEB_APP_URL is explicitly set; fall back to polling
+        explicit_url = os.environ.get("WEB_APP_URL")
+        if explicit_url:
+            webhook_url = f"{explicit_url}/webhook/{token}"
+            try:
+                await tg.bot.set_webhook(webhook_url)
+                print(f"[BOT] Webhook set: {webhook_url}", flush=True)
+                await asyncio.Event().wait()
+            except Exception as e:
+                print(f"[BOT] Webhook failed ({e}), falling back to polling", flush=True)
+                await tg.updater.start_polling()
+                await asyncio.Event().wait()
+        else:
+            await tg.updater.start_polling()
             await asyncio.Event().wait()
 
-    loop.run_until_complete(_run())
+    _telegram_loop.run_until_complete(_run())
 
 
 # ── Flask App ──────────────────────────────────────────────────────────────────
@@ -947,13 +1241,19 @@ def login():
         pwd  = request.form.get("password", "")
         if role == "worker":
             name = request.form.get("name", "").strip() or "עובד"
-            if pwd == _worker_password:
+            workers = _load_workers()
+            # Individual accounts take priority; fall back to shared password
+            if workers:
+                ok = _verify_worker(name, pwd)
+            else:
+                ok = (pwd == _worker_password)
+            if ok:
                 session.permanent = True
                 session["worker_logged_in"] = True
                 session["worker_name"]      = name
                 return redirect(url_for("worker_index"))
             _record_attempt(ip)
-            flash("סיסמה שגויה ❌", "danger")
+            flash("שם עובד או סיסמה שגויים ❌", "danger")
             return render_template("login.html", selected_role="worker", form_name=name)
         else:
             if pwd == _current_password:
@@ -1106,8 +1406,7 @@ def add():
     if request.method == "POST":
         try:
             entry = WorkEntry.from_form(request.form, entered_by="Web")
-            append_row_to_gsheet(entry)
-            _log_audit("add", "Web", f"{entry.client} | {entry.date} | {entry.task}")
+            create_entry(entry, "Web")
             flash("הרשומה נוספה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except ValueError as e:
@@ -1146,9 +1445,7 @@ def edit(row_id):
         try:
             original_entered_by = df.at[row_id, "מזין"] if row_id < len(df) else "Web"
             entry = WorkEntry.from_form(request.form, entered_by=original_entered_by)
-            for key, value in entry.to_dict().items():
-                df.at[row_id, key] = value
-            save_data_to_gsheet(df)
+            edit_row_in_gsheet(row_id, entry)
             _log_audit("edit", "Web", f"row {row_id}: {entry.client} | {entry.date}")
             flash("הרשומה עודכנה בהצלחה ✅", "success")
             return redirect(url_for("index"))
@@ -1173,8 +1470,7 @@ def edit(row_id):
 def delete(row_id):
     df = load_data_from_gsheet()
     detail = df.iloc[row_id].get("שם לקוח", str(row_id)) if row_id < len(df) else str(row_id)
-    df = df.drop(index=row_id).reset_index(drop=True)
-    save_data_to_gsheet(df)
+    delete_row_in_gsheet(row_id)
     _log_audit("delete", "Web", f"row {row_id}: {detail}")
     flash("הרשומה נמחקה ✅", "success")
     return redirect(url_for("index"))
@@ -1187,9 +1483,7 @@ def bulk_delete():
     if not row_ids:
         flash("לא נבחרו רשומות ⚠️", "warning")
         return redirect(url_for("index"))
-    df = load_data_from_gsheet()
-    df = df.drop(index=row_ids).reset_index(drop=True)
-    save_data_to_gsheet(df)
+    bulk_delete_rows_in_gsheet(row_ids)
     _log_audit("bulk-delete", "Web", f"{len(row_ids)} rows: {row_ids}")
     flash(f"{len(row_ids)} רשומות נמחקו ✅", "success")
     return redirect(url_for("index"))
@@ -1340,10 +1634,63 @@ def api_patch_entry(row_id):
     df = load_data_from_gsheet()
     if row_id >= len(df):
         return jsonify({"error": "שורה לא קיימת"}), 404
-    df.at[row_id, field] = value
-    save_data_to_gsheet(df)
+    patch_cell_in_gsheet(row_id, field, value)
     _log_audit("edit-inline", "Web", f"row {row_id}: {field}={value}")
     return jsonify({"ok": True, "row_id": row_id, "field": field, "value": value})
+
+
+# ── Worker management (manager only) ──────────────────────────────────────────
+
+@app.route("/workers", methods=["GET", "POST"])
+@login_required
+def manage_workers():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        pwd  = request.form.get("password", "").strip()
+        if not name or not pwd:
+            flash("שם וסיסמה הם שדות חובה ❌", "danger")
+        elif len(pwd) < 4:
+            flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
+        elif not _add_worker(name, pwd):
+            flash(f"עובד בשם '{name}' כבר קיים ❌", "danger")
+        else:
+            flash(f"עובד '{name}' נוסף בהצלחה ✅", "success")
+        return redirect(url_for("manage_workers"))
+    return render_template("workers.html", workers=_load_workers())
+
+
+@app.route("/workers/delete/<name>", methods=["POST"])
+@login_required
+def delete_worker(name):
+    if _delete_worker(name):
+        flash(f"עובד '{name}' נמחק ✅", "success")
+    else:
+        flash(f"עובד '{name}' לא נמצא ❌", "danger")
+    return redirect(url_for("manage_workers"))
+
+
+# ── Cache invalidation ─────────────────────────────────────────────────────────
+
+@app.route("/api/cache/invalidate", methods=["POST"])
+@login_required
+def api_cache_invalidate():
+    _invalidate_cache()
+    return jsonify({"ok": True})
+
+
+@app.route("/webhook/<token>", methods=["POST"])
+def telegram_webhook(token):
+    if not _telegram_app or token != os.environ.get("BOT_TOKEN"):
+        return "forbidden", 403
+    data = request.get_json(force=True, silent=True)
+    if data and _telegram_loop:
+        from telegram import Update as TGUpdate
+        update = TGUpdate.de_json(data, _telegram_app.bot)
+        asyncio.run_coroutine_threadsafe(
+            _telegram_app.process_update(update),
+            _telegram_loop,
+        )
+    return "ok"
 
 
 # ── Worker portal ──────────────────────────────────────────────────────────────
@@ -1394,8 +1741,7 @@ def worker_index():
     if request.method == "POST":
         try:
             entry = WorkEntry.from_form(request.form, entered_by=worker_name)
-            append_row_to_gsheet(entry)
-            _log_audit("add", worker_name, f"{entry.client} | {entry.date} | {entry.task}")
+            create_entry(entry, worker_name)
             flash("הרשומה נוספה בהצלחה ✅", "success")
         except ValueError as e:
             flash(f"שגיאת אימות: {e} ❌", "danger")
@@ -1891,6 +2237,10 @@ def api_dashboard():
 
 
 # ── Start bot thread ───────────────────────────────────────────────────────────
+
+# Start background audit flush thread
+_audit_flush_thread = threading.Thread(target=_flush_audit_to_sheets, daemon=True)
+_audit_flush_thread.start()
 
 if os.environ.get("BOT_TOKEN"):
     _bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)

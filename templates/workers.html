@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}ניהול עובדים{% endblock %}
+{% block nav_workers %}active{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <div class="container-lg">
+    <h1><i class="bi bi-people-fill"></i> ניהול עובדים</h1>
+    <p>הוסף, עדכן ומחק חשבונות עובדים. עובדים נכנסים עם שם + סיסמה אישית.</p>
+  </div>
+</div>
+
+<div class="container-lg py-4">
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="alert alert-{{ category }} alert-dismissible fade show mb-3" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endwith %}
+
+  <div class="row g-4">
+
+    <!-- Add worker form -->
+    <div class="col-12 col-md-4">
+      <div class="card-section">
+        <h5 class="mb-3"><i class="bi bi-person-plus-fill"></i> הוסף עובד חדש</h5>
+        <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">שם עובד</label>
+            <input type="text" name="name" class="form-control" required placeholder="ישראל ישראלי">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">סיסמה</label>
+            <input type="password" name="password" class="form-control" required minlength="4" placeholder="לפחות 4 תווים">
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-plus-circle-fill"></i> הוסף עובד
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Workers list -->
+    <div class="col-12 col-md-8">
+      <div class="card-section">
+        <h5 class="mb-3"><i class="bi bi-list-check"></i> רשימת עובדים ({{ workers|length }})</h5>
+        {% if workers %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th>שם עובד</th>
+                <th>חיבור טלגרם</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for w in workers %}
+              <tr>
+                <td><strong>{{ w['שם'] }}</strong></td>
+                <td>
+                  {% if w.get('telegram_id') %}
+                    <span class="badge bg-success"><i class="bi bi-telegram"></i> מחובר ({{ w['telegram_id'] }})</span>
+                  {% else %}
+                    <span class="badge bg-secondary">לא מחובר</span>
+                  {% endif %}
+                </td>
+                <td class="text-start">
+                  <form method="POST" action="/workers/delete/{{ w['שם'] }}"
+                        onsubmit="return confirm('למחוק את העובד {{ w[\"שם\"] }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                      <i class="bi bi-trash3"></i>
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="text-center text-muted py-4">
+          <i class="bi bi-people d-block fs-1 mb-2"></i>
+          <p>אין עובדים מוגדרים.<br>
+          <small>כל עוד אין עובדים, כניסת עובד תדרוש את הסיסמה המשותפת בלבד.</small></p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
