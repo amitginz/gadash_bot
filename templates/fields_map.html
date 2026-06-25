@@ -2,16 +2,18 @@
 {% block title %}מפת שדות{% endblock %}
 {% block nav_map %}active{% endblock %}
 
-{% block extra_style %}
+{% block extra_head %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
-<style>
-  .map-wrap { display: flex; gap: 1rem; padding: 1rem 1.5rem 1.5rem; }
-  #map { flex: 1; height: calc(100vh - 185px); min-height: 480px; border-radius: 14px;
-         box-shadow: 0 2px 12px rgba(0,0,0,.15); z-index: 0; }
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.css" />
+{% endblock %}
 
-  /* Side panel */
+{% block extra_style %}
+  .map-wrap { display: flex; flex-wrap: nowrap; gap: 1rem; padding: 1rem 1.5rem 1.5rem; }
+  #map { flex: 1 1 0; min-width: 0; height: calc(100vh - 185px); min-height: 480px;
+         border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,.15); z-index: 0; }
+
   .side-panel {
-    width: 300px; flex-shrink: 0; display: flex; flex-direction: column; gap: .6rem;
+    width: 300px; flex: 0 0 300px; display: flex; flex-direction: column; gap: .6rem;
     height: calc(100vh - 185px); overflow-y: auto;
   }
   .side-panel::-webkit-scrollbar { width: 5px; }
@@ -42,12 +44,10 @@
   .btn-place.cancel { background: #dc3545; }
   .btn-place.reposition { background: #6c757d; }
 
-  /* Toolbar */
   .map-toolbar {
     display: flex; align-items: center; gap: .8rem; padding: .6rem 1.5rem .2rem;
     flex-wrap: wrap;
   }
-  .map-toolbar h2 { font-size: 1.2rem; font-weight: 700; color: #1a2f4e; margin: 0; }
   .legend { display: flex; gap: .6rem; align-items: center; font-size: .78rem; color: #555; margin-right: auto; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
 
@@ -57,12 +57,15 @@
   }
   .placing-hint.show { display: inline-block; }
 
-  /* Leaflet popup override for RTL */
   .leaflet-popup-content { direction: rtl; text-align: right; min-width: 170px; }
   .popup-title { font-weight: 700; font-size: 1rem; margin-bottom: .4rem; color: #1a2f4e; }
   .popup-row { font-size: .82rem; color: #444; margin: .15rem 0; }
   .popup-row span { font-weight: 600; }
-</style>
+
+  .leaflet-control-geosearch { direction: ltr; }
+  .leaflet-control-geosearch form input { font-size: .9rem; width: 240px; }
+  .leaflet-control-geosearch .results { direction: ltr; }
+  .leaflet-control-geosearch a.reset { line-height: 30px; }
 {% endblock %}
 
 {% block content %}
@@ -102,16 +105,42 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.umd.js"></script>
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 
 // ── Map init ──────────────────────────────────────────────────────────────────
 const map = L.map("map", { zoomControl: true }).setView([31.5, 34.85], 9);
 
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-  maxZoom: 18,
-}).addTo(map);
+// ESRI World Imagery — satellite, free, no API key, global CDN, great for agricultural fields
+const satellite = L.tileLayer(
+  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+  { attribution: "© Esri, Maxar, Earthstar Geographics", maxZoom: 18 }
+).addTo(map);
+
+// Street map option as toggle
+const streets = L.tileLayer(
+  "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
+  { attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © CARTO', subdomains: "abcd", maxZoom: 19 }
+);
+
+L.control.layers({ "לוויין 🛰️": satellite, "מפת רחובות 🗺️": streets }).addTo(map);
+
+// ── Location search ───────────────────────────────────────────────────────────
+const provider = new GeoSearch.OpenStreetMapProvider({ params: { countrycodes: "il", limit: 5 } });
+const searchControl = new GeoSearch.GeoSearchControl({
+  provider,
+  style: "bar",
+  autoComplete: true,
+  autoCompleteDelay: 300,
+  showMarker: false,
+  retainZoomLevel: false,
+  searchLabel: "חפש מיקום (עברית / אנגלית)…",
+  notFoundMessage: "מיקום לא נמצא",
+  animateZoom: true,
+  keepResult: true,
+});
+map.addControl(searchControl);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let fields       = [];
