@@ -888,9 +888,10 @@ def api_ai_summary():
 
 כלול: השוואה לחודש הקודם, נקודת חוזק אחת, נקודת חולשה אחת, והמלצה מעשית אחת. כתוב בגוף ראשון רבים ("בחנו", "ראינו")."""
             try:
-                from google import genai as _genai
-                _client = _genai.Client(api_key=gemini_key)
-                r = _client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                import google.generativeai as _genai
+                _genai.configure(api_key=gemini_key)
+                _model = _genai.GenerativeModel("gemini-2.5-flash")
+                r = _model.generate_content(prompt)
                 summary = r.text
             except Exception as ai_err:
                 summary = f"שגיאת AI: {ai_err}"
