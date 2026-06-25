@@ -4,6 +4,7 @@ numpy==1.26.4
 openpyxl==3.1.2
 gspread==6.1.2
 google-auth==2.29.0
+google-genai==1.16.0
 gunicorn==21.2.0
 python-telegram-bot==20.7
 Flask-WTF==1.2.1
