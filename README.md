@@ -110,6 +110,10 @@ Set `BOT_TOKEN` and `GOOGLE_CREDS` as environment variables in your host's dashb
 web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2
 ```
 
+## Credits
+
+Built with the assistance of [Claude](https://claude.ai) (Anthropic).
+
 ## License
 
 MIT
