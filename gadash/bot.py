@@ -3,6 +3,8 @@ import os
 from datetime import date, datetime, timedelta
 
 import pandas as pd
+import datetime as _dt
+
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, ConversationHandler,
@@ -21,7 +23,7 @@ from gadash.workers import (
     _verify_worker,
 )
 
-WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://gadash-bot.fly.dev")
+WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
 
 (MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR,
  NOTE, CONFIRM, SEARCH, EDIT_SELECT, REGISTER_NAME, REGISTER_PASSWORD) = range(16)
@@ -466,105 +468,101 @@ def start_telegram_bot():
             except Exception:
                 pass
 
-    async def _scheduled_reports():
-        sent = set()
-        while True:
-            await asyncio.sleep(1800)
-            now      = datetime.now()
-            date_str = now.strftime("%Y-%m-%d")
-            hour     = now.hour
+    async def _morning_job(context):
+        now = datetime.now()
+        try:
+            df   = load_data_from_gsheet()
+            subs = _get_subscribers()
+            if not subs:
+                return
 
-            if hour == 8 and (date_str, "morning") not in sent:
-                sent.add((date_str, "morning"))
-                sent = {k for k in sent if k[0] == date_str}
-                try:
-                    df   = load_data_from_gsheet()
-                    subs = _get_subscribers()
-                    if not subs:
-                        continue
+            yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+            y_df = df[df["תאריך"] == yesterday]
+            if not y_df.empty:
+                y_df = y_df.copy()
+                y_df["_שעות"] = pd.to_numeric(y_df["שעות"], errors="coerce").fillna(0)
+                total_h = y_df["_שעות"].sum()
+                lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות"]
+                if total_h > 0:
+                    lines[0] += f" | {total_h:.1f} שעות"
+                lines.append("")
+                for _, row in y_df.iterrows():
+                    h = f" | {float(row['_שעות']):.1f}ש׳" if float(row['_שעות']) > 0 else ""
+                    lines.append(
+                        f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
+                        f"{row.get('שם חלקה','')} | {row.get('גידול','')}{h}"
+                    )
+                await _broadcast(subs, "\n".join(lines))
 
-                    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-                    y_df = df[df["תאריך"] == yesterday]
-                    if not y_df.empty:
-                        y_df = y_df.copy()
-                        y_df["_שעות"] = pd.to_numeric(y_df["שעות"], errors="coerce").fillna(0)
-                        total_h = y_df["_שעות"].sum()
-                        lines = [f"☀️ סיכום יום {yesterday} — {len(y_df)} עבודות"]
-                        if total_h > 0:
-                            lines[0] += f" | {total_h:.1f} שעות"
-                        lines.append("")
-                        for _, row in y_df.iterrows():
-                            h = f" | {float(row['_שעות']):.1f}ש׳" if float(row['_שעות']) > 0 else ""
-                            lines.append(
-                                f"• {row.get('שם לקוח','')} | {row.get('עבודה','')} | "
-                                f"{row.get('שם חלקה','')} | {row.get('גידול','')}{h}"
-                            )
-                        await _broadcast(subs, "\n".join(lines))
+            if now.weekday() == 0:
+                week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+                w_df = df[df["תאריך"] >= week_start].copy()
+                if not w_df.empty:
+                    w_df["_שעות"] = pd.to_numeric(w_df["שעות"], errors="coerce").fillna(0)
+                    total_h = w_df["_שעות"].sum()
+                    top_clients = w_df["שם לקוח"].value_counts().head(3)
+                    lines = [f"📊 סיכום שבועי — {len(w_df)} עבודות | {total_h:.1f} שעות\n"]
+                    lines.append("👤 לקוחות מובילים:")
+                    for client, cnt in top_clients.items():
+                        lines.append(f"  • {client}: {cnt}")
+                    field_h = (
+                        w_df[w_df["_שעות"] > 0]
+                        .groupby("שם חלקה")["_שעות"].sum()
+                        .sort_values(ascending=False).head(5)
+                    )
+                    if not field_h.empty:
+                        lines.append("\n📍 שעות לפי חלקה:")
+                        for fn, h in field_h.items():
+                            lines.append(f"  • {fn or 'לא צוין'}: {h:.1f}ש׳")
+                    crop_h = (
+                        w_df[w_df["_שעות"] > 0]
+                        .groupby("גידול")["_שעות"].sum()
+                        .sort_values(ascending=False).head(5)
+                    )
+                    if not crop_h.empty:
+                        lines.append("\n🌾 שעות לפי גידול:")
+                        for cn, h in crop_h.items():
+                            lines.append(f"  • {cn or 'לא צוין'}: {h:.1f}ש׳")
+                    await _broadcast(subs, "\n".join(lines))
 
-                    if now.weekday() == 0:
-                        week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-                        w_df = df[df["תאריך"] >= week_start].copy()
-                        if not w_df.empty:
-                            w_df["_שעות"] = pd.to_numeric(w_df["שעות"], errors="coerce").fillna(0)
-                            total_h = w_df["_שעות"].sum()
-                            top_clients = w_df["שם לקוח"].value_counts().head(3)
-                            lines = [f"📊 סיכום שבועי — {len(w_df)} עבודות | {total_h:.1f} שעות\n"]
-                            lines.append("👤 לקוחות מובילים:")
-                            for client, cnt in top_clients.items():
-                                lines.append(f"  • {client}: {cnt}")
-                            field_h = (
-                                w_df[w_df["_שעות"] > 0]
-                                .groupby("שם חלקה")["_שעות"].sum()
-                                .sort_values(ascending=False).head(5)
-                            )
-                            if not field_h.empty:
-                                lines.append("\n📍 שעות לפי חלקה:")
-                                for fn, h in field_h.items():
-                                    lines.append(f"  • {fn or 'לא צוין'}: {h:.1f}ש׳")
-                            crop_h = (
-                                w_df[w_df["_שעות"] > 0]
-                                .groupby("גידול")["_שעות"].sum()
-                                .sort_values(ascending=False).head(5)
-                            )
-                            if not crop_h.empty:
-                                lines.append("\n🌾 שעות לפי גידול:")
-                                for cn, h in crop_h.items():
-                                    lines.append(f"  • {cn or 'לא צוין'}: {h:.1f}ש׳")
-                            await _broadcast(subs, "\n".join(lines))
+            if not df.empty:
+                threshold = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+                last_per_client = df.groupby("שם לקוח")["תאריך"].max()
+                inactive = last_per_client[last_per_client < threshold]
+                if not inactive.empty:
+                    lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים:\n"]
+                    for client_name, last_dt in inactive.items():
+                        lines.append(f"• {client_name} (אחרון: {last_dt})")
+                    await _broadcast(subs, "\n".join(lines))
+        except Exception as e:
+            print(f"[BOT] Morning report error: {e}")
 
-                    if not df.empty:
-                        threshold = (now - timedelta(days=14)).strftime("%Y-%m-%d")
-                        last_per_client = df.groupby("שם לקוח")["תאריך"].max()
-                        inactive = last_per_client[last_per_client < threshold]
-                        if not inactive.empty:
-                            lines = ["⏰ תזכורת — לקוחות ללא עבודה ב-14 ימים:\n"]
-                            for client_name, last_dt in inactive.items():
-                                lines.append(f"• {client_name} (אחרון: {last_dt})")
-                            await _broadcast(subs, "\n".join(lines))
-                except Exception as e:
-                    print(f"[BOT] Morning report error: {e}")
-
-            if hour == 18 and (date_str, "evening") not in sent:
-                sent.add((date_str, "evening"))
-                try:
-                    subs = _get_subscribers()
-                    if subs:
-                        msg = (
-                            f"📋 תזכורת סוף יום — {date_str}\n\n"
-                            "אל תשכח לדווח על שעות העבודה שלך היום!\n"
-                            f"🔗 {WEB_APP_URL}/worker\n\n"
-                            "לדיווח דרך הבוט — שלח 'הזן עבודה חדשה'"
-                        )
-                        await _broadcast(subs, msg)
-                except Exception as e:
-                    print(f"[BOT] Evening reminder error: {e}")
+    async def _evening_job(context):
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        try:
+            subs = _get_subscribers()
+            if subs:
+                msg = (
+                    f"📋 תזכורת סוף יום — {date_str}\n\n"
+                    "אל תשכח לדווח על שעות העבודה שלך היום!\n"
+                    f"🔗 {WEB_APP_URL}/worker\n\n"
+                    "לדיווח דרך הבוט — שלח 'הזן עבודה חדשה'"
+                )
+                await _broadcast(subs, msg)
+        except Exception as e:
+            print(f"[BOT] Evening reminder error: {e}")
 
     async def _run():
         global _telegram_app
         _telegram_app = tg
         await tg.initialize()
         await tg.start()
-        asyncio.create_task(_scheduled_reports())
+
+        if tg.job_queue:
+            tg.job_queue.run_daily(_morning_job, time=_dt.time(8, 0))
+            tg.job_queue.run_daily(_evening_job, time=_dt.time(18, 0))
+        else:
+            print("[BOT] JobQueue unavailable — install python-telegram-bot[job-queue] for scheduled reports")
 
         explicit_url = os.environ.get("WEB_APP_URL")
         if explicit_url:

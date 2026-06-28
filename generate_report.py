@@ -134,7 +134,7 @@ def add_picture_safe(doc, path, width=Inches(5.5)):
 # COVER PAGE
 # ══════════════════════════════════════════════════════════════════════════════
 add_rtl_para(doc, 'הפקולטה למדעים — החוג למדעי המחשב', bold=False, size=12, align=WD_ALIGN_PARAGRAPH.CENTER)
-add_rtl_para(doc, 'נושאים מתקדמים בפיתוח תוכנה | סמסטר ב׳ תשפ״ה', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
+add_rtl_para(doc, 'נושאים מתקדמים בפיתוח תוכנה | סמסטר ב׳ תשפ״ו', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
 add_rtl_para(doc, 'מרצה: ד״ר איאד סולימאן', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
 doc.add_paragraph()
 doc.add_paragraph()
@@ -159,7 +159,7 @@ add_rtl_para(doc, 'שותפים:', bold=True, size=12, align=WD_ALIGN_PARAGRAPH.
 add_rtl_para(doc, 'עמית גינזברג  |  ת״ז: 313393027  |  amitginz@gmail.com  |  054-3192907', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
 add_rtl_para(doc, 'הדר קלר  |  ת״ז: 209825512  |  050-7551810', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
 doc.add_paragraph()
-add_rtl_para(doc, 'תאריך הגשה: 15/08/2025', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
+add_rtl_para(doc, 'תאריך הגשה: 15/08/2026', size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
 
 doc.add_page_break()
 
@@ -206,76 +206,35 @@ add_heading_rtl(doc, 'סעיף 2 — תיאור מילולי של המערכת',
 
 add_heading_rtl(doc, 'רקע ומטרה', 2)
 add_rtl_para(doc,
-    'מערכת "ניהול עבודות גד״ש" פותחה עבור גוף חקלאי המנהל עבודות שדה מגוונות כגון חריש, '
-    'ריסוס, קציר ודיסוק. הצורך שעמד בבסיס הפרויקט נבע מכך שעובדי שדה שאינם רגילים לממשקים '
-    'ממוחשבים נדרשים לדווח על עבודות בזמן אמת, מהשדה, ללא גישה למחשב. במקביל, מנהל החווה '
-    'נדרש לצפות בנתונים מרוכזים, לסנן לפי לקוח ותאריך, לערוך רשומות ולייצא דוחות לאקסל.',
+    'מערכת "ניהול עבודות גד״ש" פותחה עבור גוף חקלאי המנהל עבודות שדה (חריש, ריסוס, קציר, דיסוק). '
+    'הצורך: עובדי שדה שאינם רגילים לממשקים ממוחשבים נדרשים לדווח על עבודות בזמן אמת, מהשדה; '
+    'המנהל נדרש לצפות בנתונים מרוכזים, לסנן, לערוך ולייצא דוחות.',
     size=11)
 
-add_heading_rtl(doc, 'הפתרון', 2)
-add_rtl_para(doc, 'המערכת מורכבת משלושה ממשקים המשלימים זה את זה:', bold=True, size=11)
-
+add_heading_rtl(doc, 'שלושה ממשקים משלימים', 2)
 add_rtl_para(doc,
-    'בוט טלגרם (ממשק ניידי לעובדי השדה): עובד השדה פותח את אפליקציית טלגרם ומתחיל שיחה עם '
-    'הבוט. הבוט מנחה אותו בשפה העברית דרך שאלות פשוטות ומדורגות: שם לקוח, תאריך, סוג העבודה, '
-    'שם החלקה, גידול (עם אפשרות לדלג), כמות, שעות עבודה (עם אפשרות לדלג), כלי עבודה, שם המפעיל '
-    'והערות. בשלב ההערות ניתן לשלוח גם תמונה — הבוט שומר את מזהה התמונה (file_id) כהערה לרשומה. '
-    'בסוף מוצג סיכום לאישור, ורק לאחר אישור המשתמש הנתונים נשמרים. '
-    'הבוט תומך גם בפקודות נוספות: /undo לביטול הרשומה האחרונה, '
-    'בחירת רשומה מהאחרונות לצפייה וקישור עריכה, חיפוש לפי לקוח, סטטיסטיקות, '
-    'ודוחות אוטומטיים: יומי ב-8:00 (עם שעות כולל), שבועי בכל יום שני (עם שעות לפי חלקה וגידול), '
-    'תזכורת ללקוחות שלא עבדו ב-14 יום, ותזכורת לעובדים בסוף יום ב-18:00 עם קישור לפורטל.',
+    'בוט טלגרם — ממשק ניידי לעובד השדה: שיחה מודרכת בעברית (12 שלבי הזנה), '
+    'תמיכה בתמונה כהערה, /undo לביטול הרשומה האחרונה, חיפוש וסטטיסטיקות. '
+    'דוחות אוטומטיים: יומי ב-08:00, שבועי כל יום שני, תזכורת ב-18:00, '
+    'והתרעה על לקוחות שלא עבדו ב-14 יום.',
     size=11)
 
 add_rtl_para(doc,
-    'פורטל עובד Web (ממשק הזנה לעובדים): עובד שאינו משתמש בטלגרם יכול לגשת לממשק Web פשוט '
-    'בכתובת /worker עם סיסמת עובד נפרדת (WORKER_PASSWORD). '
-    'הפורטל מציג שני לוחות: טופס הוספת עבודה (כולל שדות גידול ושעות עבודה) בצד שמאל, '
-    'והיסטוריה אישית של העבודות שהוא עצמו הזין בצד ימין. '
-    'העובד רואה רק את הרשומות שהוא הזין (לפי שם), ואין לו גישה לרשומות של אחרים, לעריכה, למחיקה, לייצוא או ללוג שינויים. '
-    'ממשק הפורטל מעוצב בגוון ירוק (המזוהה עם עבודת שדה) ונפרד מממשק המנהל.',
+    'פורטל עובד Web (/worker) — לעובד ללא טלגרם: טופס הזנה מהיר + היסטוריה אישית בלבד '
+    '(ללא גישה לנתוני אחרים, עריכה, ייצוא או לוג). '
+    'ממשק ניהול Web (/) — למנהל: טבלה עם עימוד, חיפוש גלובלי, סינון עם שמירה, '
+    'Quick-Add modal, עריכה מוטבעת, מחיקה מרובה, שכפול, ייצוא/ייבוא Excel/CSV, '
+    'דוח חודשי (3 גרפים), דוח חלקה, דוח לקוח, לוג שינויים, הדפסה/PDF ו-REST API.',
     size=11)
 
+add_heading_rtl(doc, 'אחסון, אבטחה ופריסה', 2)
 add_rtl_para(doc,
-    'ממשק Web לניהול (למנהל): מנהל החווה ניגש לממשק Web שהוא לוח בקרה מלא עם אימות סיסמה. '
-    'הממשק כולל: צפייה בכל הרשומות ממוינות לפי תאריך עם עימוד (50 רשומות לדף), '
-    'חיפוש גלובלי מיידי על פני כל השדות הנראים, '
-    'סינון לפי שם לקוח, תאריך, שדה ומפעיל (עם שמירה בזיכרון דפדפן), '
-    'הוספה מהירה (Quick-Add modal) בלי לעזוב את הדף, '
-    'הוספה ידנית מלאה עם השלמה אוטומטית לכל השדות כולל גידול, '
-    'עריכה מוטבעת (double-click על תא) ועריכה בטופס נפרד, '
-    'מחיקה בודדת ומחיקה מרובה, שכפול רשומה, '
-    'ייצוא לאקסל וCSV (עם הסינון הנוכחי), ייבוא אקסל עם ניקוי כפילויות, '
-    'דוח חודשי עם 3 גרפים (Chart.js), לוג שינויים מלא, הדפסה/PDF, שינוי סיסמה, '
-    'דוח שעות לפי חלקה וגידול (/field-report) עם טבלת pivot ותרשימים, '
-    'הדפסת PDF של דוח החלקה (/field-report/print), '
-    'ודוח לקוח (/client-report) עם היסטוריה מלאה, סה"כ שעות ו-4 גרפים.',
-    size=11)
-
-add_heading_rtl(doc, 'אחסון הנתונים', 2)
-add_rtl_para(doc,
-    'כל הנתונים מאוחסנים ב-Google Sheets בגיליון בשם "Gadash Data". בחירה זו מאפשרת גם '
-    'למנהל לפתוח את הגיליון ישירות לצפייה ועריכה ידנית. הגיליון מהווה מקור האמת היחיד של '
-    'המערכת, ושני הממשקים קוראים וכותבים לאותו גיליון. הנתונים נטענים עם cache בזיכרון '
-    '(TTL 30 שניות) ו-threading.Lock למניעת race conditions.',
-    size=11)
-
-add_heading_rtl(doc, 'אבטחה', 2)
-add_rtl_para(doc,
-    'המערכת כוללת מספר שכבות הגנה: '
-    'מסך כניסה מאוחד אחד (/login) עם בורר תפקיד — מנהל (כחול) או עובד (ירוק). '
-    'בחירת התפקיד משנה את הטופס ואת הסיסמה שנבדקת (WEB_PASSWORD לעומת WORKER_PASSWORD). '
-    'הגבלת קצב כניסות (5 ניסיונות בדקה) למניעת brute force, '
-    'CSRF tokens לכל הטפסים ובקשות AJAX, '
-    'session timeout של 8 שעות, '
-    'ולוג שינויים (audit trail) המתעד כל פעולת כתיבה עם תאריך, משתמש ופרטים.',
-    size=11)
-
-add_heading_rtl(doc, 'פריסה', 2)
-add_rtl_para(doc,
-    'המערכת מותקנת על שרת ענן Fly.io ורצה ברציפות עם שני מכונות (2×) לזמינות גבוהה. '
-    'תהליך Python יחיד מריץ במקביל את שרת ה-Web (gunicorn) ואת הבוט (ב-thread נפרד '
-    'עם asyncio event loop). כתובת המערכת: https://gadash-bot.fly.dev/',
+    'Google Sheets ("Gadash Data") הוא מקור האמת היחיד — נגיש ישירות למנהל, גיבוי אוטומטי, '
+    'ללא עלות. cache בזיכרון (TTL 5 דקות) + threading.Lock למניעת race conditions. '
+    'אבטחה: CSRF tokens, rate limiting (5 ניסיונות/דקה), session timeout 8 שעות, '
+    'audit trail לכל פעולת כתיבה. '
+    'פריסה: Fly.io (Amsterdam) — תהליך Python יחיד מריץ gunicorn ובוט ב-thread נפרד. '
+    'כתובת: https://gadash-bot.fly.dev/',
     size=11)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -332,36 +291,21 @@ make_rtl_table(doc,
 )
 
 doc.add_paragraph()
-add_rtl_para(doc, 'נתיבי ה-Web:', bold=True, size=11)
+add_rtl_para(doc, 'נתיבי ה-Web המרכזיים:', bold=True, size=11)
 make_rtl_table(doc,
     headers=['נתיב', 'Method', 'תיאור'],
     rows=[
-        ['/', 'GET', 'דף ראשי — רשימת עבודות עם סינון ועימוד'],
-        ['/login', 'GET, POST', 'כניסה עם סיסמה + rate limiting'],
-        ['/logout', 'GET', 'יציאה'],
-        ['/change-password', 'GET, POST', 'שינוי סיסמה'],
-        ['/add', 'GET, POST', 'הוספת רשומה חדשה (autocomplete)'],
-        ['/duplicate/<id>', 'GET', 'שכפול רשומה קיימת (prefill)'],
-        ['/edit/<id>', 'GET, POST', 'עריכת רשומה קיימת'],
-        ['/delete/<id>', 'POST', 'מחיקת רשומה בודדת'],
-        ['/bulk-delete', 'POST', 'מחיקה מרובה'],
-        ['/summary', 'GET', 'דוח חודשי — pivot + לקוחות מובילים'],
-        ['/audit', 'GET', 'לוג שינויים (200 פעולות אחרונות)'],
-        ['/print', 'GET', 'דף הדפסה/PDF'],
-        ['/export', 'GET', 'הורדת קובץ Excel'],
-        ['/export/csv', 'GET', 'הורדת קובץ CSV'],
-        ['/import', 'GET, POST', 'העלאת קובץ Excel עם dedup'],
-        ['/api/entries', 'GET', 'REST API — רשומות בפורמט JSON (עם סינון)'],
-        ['/api/entries/<id>', 'PATCH', 'REST API — עריכה מוטבעת'],
-        ['/api/docs', 'GET', 'תיעוד REST API (HTML)'],
-        ['/worker/login', 'GET', 'redirect → /login (לאחר איחוד מסך הכניסה)'],
-        ['/worker/logout', 'GET', 'יציאת עובד → חזרה ל-/login'],
+        ['/', 'GET', 'דף ראשי — רשימת עבודות עם סינון, חיפוש ועימוד'],
+        ['/login  /logout', 'GET, POST', 'כניסה מאוחדת (מנהל/עובד) עם rate limiting'],
+        ['/add  /edit/<id>  /delete/<id>', 'GET, POST', 'הוספה, עריכה ומחיקת רשומה'],
+        ['/bulk-delete  /duplicate/<id>', 'POST / GET', 'מחיקה מרובה ושכפול רשומה'],
+        ['/summary  /audit  /print', 'GET', 'דוח חודשי, לוג שינויים, הדפסה/PDF'],
+        ['/export  /export/csv  /import', 'GET / POST', 'ייצוא לאקסל/CSV וייבוא עם dedup'],
+        ['/field-report  /client-report', 'GET', 'דוחות שעות לפי חלקה ולפי לקוח'],
         ['/worker', 'GET, POST', 'פורטל עובד — טופס הזנה + היסטוריה אישית'],
-        ['/field-report', 'GET', 'דוח שעות לפי חלקה × גידול — pivot table + גרפים (מנהל)'],
-        ['/field-report/print', 'GET', 'עמוד הדפסה/PDF של דוח החלקה'],
-        ['/client-report', 'GET', 'דוח לקוח — כל הרשומות + שעות + 4 גרפים'],
+        ['/api/entries', 'GET / PATCH', 'REST API — רשומות JSON + עריכה מוטבעת'],
     ],
-    col_widths=[4, 2.5, 8]
+    col_widths=[4.5, 2.5, 7.5]
 )
 
 add_heading_rtl(doc, '3.4 בסיס נתונים', 2)
@@ -404,23 +348,11 @@ doc.add_paragraph()
 add_heading_rtl(doc, 'סעיף 4 — תדפיסי מסכים', 1)
 
 screens = [
-    ('מסך 1א — מסך כניסה מאוחד: מצב מנהל (כחול, סיסמה בלבד)',         SCR_LOGIN),
-    ('מסך 1ב — מסך כניסה מאוחד: מצב עובד (ירוק, שם + סיסמה)',         SCR_LOGIN_WORKER),
-    ('מסך 2 — לוח בקרה ראשי: כרטיסיות סטטיסטיקה וגרפים',             SCR_MAIN_FULL),
-    ('מסך 3 — טבלת רשומות: חיפוש גלובלי, עריכה מוטבעת ועימוד',        SCR_MAIN_TABLE),
-    ('מסך 4 — חיפוש גלובלי מסנן שורות בכל העמודות בזמן אמת',          SCR_GLOBAL_SEARCH),
-    ('מסך 5 — Quick-Add modal: הוספת רשומה מהירה בלי לעזוב את הדף',   SCR_QUICK_ADD),
-    ('מסך 6 — טופס הוספה מלא עם השלמה אוטומטית',                       SCR_ADD),
-    ('מסך 7 — דוח חודשי עם 3 גרפי Chart.js (עוגה, עמודות, אופקי)',     SCR_SUMMARY),
-    ('מסך 8 — לוג שינויים: כל פעולות הכתיבה עם תאריך ומשתמש',          SCR_AUDIT),
-    ('מסך 9 — דף הדפסה/PDF',                                            SCR_PRINT),
-    ('מסך 10 — ייבוא נתונים מקובץ Excel עם ניקוי כפילויות',            SCR_IMPORT),
-    ('מסך 11 — תיעוד REST API: נתיבים, פרמטרים ודוגמות קוד',           SCR_API_DOCS),
-    ('מסך 12 — אישור מחיקת רשומה',                                      SCR_DELETE),
-    ('מסך 13 — פורטל עובד: טופס הזנה (כולל גידול ושעות) + היסטוריה אישית', SCR_WORKER_MAIN),
-    ('מסך 14 — דוח שעות לפי חלקה וגידול: pivot table + גרפי בר ודונאט',   SCR_FIELD_REPORT),
-    ('מסך 15 — דוח לקוח: 4 גרפים + טבלת כל הרשומות',                      SCR_CLIENT_REPORT),
-    ('מסך 16 — עמוד הדפסה/PDF של דוח חלקה (עיצוב A4)',                     SCR_FIELD_PRINT),
+    ('מסך 1 — מסך כניסה מאוחד: בורר תפקיד (מנהל כחול / עובד ירוק)',    SCR_LOGIN),
+    ('מסך 2 — לוח בקרה ראשי: טבלת רשומות, חיפוש גלובלי ועריכה מוטבעת', SCR_MAIN_TABLE),
+    ('מסך 3 — Quick-Add modal: הוספת רשומה מהירה + טופס הוספה מלא',     SCR_QUICK_ADD),
+    ('מסך 4 — פורטל עובד: טופס הזנה (גידול ושעות) + היסטוריה אישית',   SCR_WORKER_MAIN),
+    ('מסך 5 — דוח שעות לפי חלקה וגידול: pivot table + גרפי בר ודונאט', SCR_FIELD_REPORT),
 ]
 for title, path in screens:
     add_rtl_para(doc, title, bold=True, size=11)
@@ -450,31 +382,18 @@ add_rtl_para(doc, 'תרחישי שימוש (Use Cases):', bold=True, size=11)
 make_rtl_table(doc,
     headers=['Use Case', 'שחקן'],
     rows=[
-        ['הזנת עבודה חדשה דרך הבוט', 'עובד שדה'],
-        ['צפייה ב-5 עבודות אחרונות', 'עובד שדה'],
-        ['חיפוש לפי לקוח', 'עובד שדה'],
-        ['קבלת סטטיסטיקות', 'עובד שדה'],
-        ['ביטול הרשומה האחרונה (/undo)', 'עובד שדה'],
-        ['קבלת דוח יומי/שבועי אוטומטי', 'עובד שדה'],
-        ['כניסה עם סיסמה', 'מנהל'],
-        ['צפייה בכל העבודות עם עימוד', 'מנהל'],
-        ['סינון לפי לקוח / תאריך / שדה / מפעיל', 'מנהל'],
-        ['הוספת עבודה דרך ה-Web', 'מנהל'],
-        ['עריכה ידנית / עריכה מוטבעת (inline)', 'מנהל'],
-        ['שכפול רשומה', 'מנהל'],
-        ['מחיקה בודדת / מחיקה מרובה', 'מנהל'],
-        ['ייצוא ל-Excel / CSV', 'מנהל'],
-        ['ייבוא מ-Excel עם dedup', 'מנהל'],
-        ['צפייה בדוח חודשי', 'מנהל'],
-        ['צפייה בלוג שינויים', 'מנהל'],
-        ['הדפסה / PDF', 'מנהל'],
-        ['שינוי סיסמה', 'מנהל'],
-        ['הוספה מהירה (Quick-Add modal)', 'מנהל'],
-        ['חיפוש גלובלי בכל השדות', 'מנהל'],
-        ['צפייה בתיעוד REST API', 'מנהל'],
-        ['כניסה לפורטל עובד עם שם + סיסמה', 'עובד Web'],
-        ['הזנת עבודה דרך פורטל Web', 'עובד Web'],
-        ['צפייה בהיסטוריה האישית (העבודות שלי)', 'עובד Web'],
+        ['הזנת עבודה חדשה (שיחה מודרכת)', 'עובד שדה (בוט)'],
+        ['צפייה באחרונות, חיפוש לפי לקוח, סטטיסטיקות', 'עובד שדה (בוט)'],
+        ['ביטול הרשומה האחרונה (/undo)', 'עובד שדה (בוט)'],
+        ['קבלת דוח יומי/שבועי אוטומטי ותזכורת 18:00', 'עובד שדה (בוט)'],
+        ['הזנת עבודה + צפייה בהיסטוריה אישית', 'עובד Web (פורטל)'],
+        ['צפייה בכל העבודות עם סינון, חיפוש ועימוד', 'מנהל'],
+        ['הוספה (כולל Quick-Add), עריכה (כולל inline), שכפול, מחיקה', 'מנהל'],
+        ['ייצוא Excel/CSV, ייבוא עם dedup', 'מנהל'],
+        ['דוח חודשי (3 גרפים), דוח חלקה, דוח לקוח', 'מנהל'],
+        ['לוג שינויים, הדפסה/PDF, שינוי סיסמה', 'מנהל'],
+        ['גישה ל-REST API (JSON + inline PATCH)', 'מנהל / מפתח'],
+        ['קריאה/כתיבה ב-Google Sheets', 'Google Sheets (מערכת)'],
     ],
     col_widths=[9, 5.5]
 )
@@ -483,25 +402,28 @@ make_rtl_table(doc,
 doc.add_paragraph()
 add_heading_rtl(doc, '5.2 Class Diagram', 2)
 add_picture_safe(doc, IMG_CLASS)
-add_rtl_para(doc, 'המערכת כוללת את המחלקות הבאות:', size=11)
+add_rtl_para(doc, 'המערכת מחולקת ל-gadash/ package עם המודולים הבאים:', size=11)
 make_rtl_table(doc,
-    headers=['מחלקה', 'תכונות עיקריות', 'פעולות עיקריות'],
+    headers=['מודול / קובץ', 'תכונות / קבועים', 'פונקציות עיקריות'],
     rows=[
-        ['WorkEntry (dataclass)',
-         'client, date, task, field_name\ncrop, amount, hours\ntool, operator, notes, entered_by',
-         '__post_init__() — validations\nto_sheet_row(), to_dict()\nfrom_form(), from_bot(), from_dict()'],
-        ['FlaskApp',
-         'app: Flask\nCOLUMNS: list\nPAGE_SIZE: int\n_current_password: str',
-         'index(), login(), add(), edit(), delete()\nbulk_delete(), duplicate(), summary()\naudit(), print(), export(), import_data()\napi_entries(), api_entry_patch()\nfield_report(), field_report_print()\nclient_report()'],
-        ['GoogleSheetsConnector',
-         '_gs_client: gspread.Client\n_cache_data, _cache_time\n_CACHE_TTL=30\n_gs_lock: Lock',
-         '_get_sheet()\nload_data_from_gsheet()\nappend_row_to_gsheet(entry: WorkEntry)\nsave_data_to_gsheet(df)\n_invalidate_cache()'],
-        ['TelegramBot',
-         'token: str\nsubscribers: set',
-         'start(), menu_choice()\nbot_recent(), bot_stats(), bot_edit_last()\nbot_search_results(), bot_undo()\nconfirm(), cancel()\n_scheduled_reports()'],
-        ['AuditLog',
-         'AUDIT_LOG_FILE: str\n_audit_lock: Lock',
-         '_log_audit(action, user, detail)\n_read_audit_log(limit)'],
+        ['gadash/models.py\nWorkEntry (dataclass)',
+         'COLUMNS: list[str] — 11 עמודות\nVALID_TASKS: set\nclient, date, task, field_name\ncrop, amount, hours\ntool, operator, notes, entered_by',
+         '__post_init__() — אימות חובה\nto_sheet_row(), to_dict()\nfrom_form(), from_bot(), from_dict()'],
+        ['gadash/sheets.py\n(Google Sheets I/O)',
+         '_gs_client: gspread.Client\n_cache_data, _cache_time\n_CACHE_TTL = 300 (שניות)\n_gs_lock: threading.Lock',
+         'load_data_from_gsheet() → DataFrame\nappend_row_to_gsheet(entry)\nedit_row / delete_row / bulk_delete\npatch_cell_in_gsheet()\nsave_data_to_gsheet(df)'],
+        ['gadash/bot.py\n(Telegram Bot)',
+         'WEB_APP_URL: str\n16 מצבי שיחה (MENU…CONFIRM\nREGISTER_NAME, REGISTER_PASSWORD)\n_telegram_app, _telegram_loop',
+         'start(), menu_choice(), confirm()\nnote_photo() — תמונה כהערה\nbot_undo(), bot_search_results()\n_scheduled_reports() — יומי/שבועי/18:00\nstart_telegram_bot()'],
+        ['gadash/audit.py\n(Audit Log)',
+         'AUDIT_LOG_FILE = "audit.log"\n_audit_queue: deque\n_audit_lock: Lock',
+         '_log_audit(action, user, detail)\n_read_audit_log(limit) → list\n_flush_audit_to_sheets() — כל 30 שניות'],
+        ['gadash/workers.py\n(Worker Accounts)',
+         'SHA-256 password hashing',
+         '_load_workers(), _verify_worker()\n_add_worker(), _delete_worker()\n_get_worker_by_telegram_id()\n_link_worker_telegram()'],
+        ['app.py\n(Flask App)',
+         'PAGE_SIZE = 50\n_current_password, _worker_password\nCSRF token + rate limiter',
+         'index(), login(), add(), edit(), delete()\nbulk_delete(), duplicate(), summary()\naudit(), export(), import_data()\nfield_report(), client_report()\napi_entries(), api_entry_patch()'],
     ],
     col_widths=[3.5, 5.5, 5.5]
 )
@@ -578,17 +500,11 @@ make_rtl_table(doc,
     rows=[
         ['ebfd1be', 'Add work hours & crop tracking, field/client reports, PDF print, worker reminders'],
         ['0774f0a', 'Unify login: single /login page for both manager and worker with role selector'],
-        ['efaef93', 'Add worker portal: separate /worker page with own password, add-entry form and personal history'],
-        ['1072140', 'Add 8 improvements: global search, quick-add modal, summary charts, bot edit-any, bot photo, client reminders, API docs, pytest (27 tests)'],
-        ['1caf955', 'Add improvements #1-#12: CSRF, rate limit, session timeout, inline edit, mobile cards, CSV export, audit log, REST API'],
+        ['efaef93', 'Add worker portal: separate /worker page with personal history'],
+        ['1072140', 'Add global search, quick-add modal, charts, API docs, pytest (27 tests)'],
+        ['1caf955', 'Add CSRF, rate limit, session timeout, inline edit, audit log, REST API'],
         ['67b8f9f', 'Refactor: add WorkEntry dataclass for validated data management'],
-        ['410648f', 'Add improvements #1-#10: print PDF, duplicate row, bulk delete, monthly summary, change password, filter memory, smart import'],
-        ['6fe52c8', 'Add improvements #6-#11 and #13: auth, pagination, autocomplete, bot search'],
-        ['2984acd', 'Add flash messages and date range filter'],
-        ['122b60b', 'Add GSheets cache, Chart.js dashboard charts, and POST delete'],
-        ['595896a', 'Add final submission documents, screenshots, and UML source files'],
-        ['1725595', 'Keep one machine always running for Telegram polling'],
-        ['0150cb1', 'Switch to Fly.io v2 config with Dockerfile'],
+        ['0150cb1', 'Deploy to Fly.io — Dockerfile, fly.toml, gunicorn'],
     ],
     col_widths=[3.5, 11]
 )

@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from datetime import datetime as _dt
 
 COLUMNS = [
     "שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול",
@@ -31,6 +32,10 @@ class WorkEntry:
             raise ValueError("שם לקוח חובה")
         if not re.match(r"^\d{4}-\d{2}-\d{2}$", self.date):
             raise ValueError(f"תאריך לא תקין: '{self.date}' — נדרש YYYY-MM-DD")
+        try:
+            _dt.strptime(self.date, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"תאריך לא קיים: '{self.date}'")
         if self.task not in VALID_TASKS:
             raise ValueError(f"סוג עבודה לא תקין: '{self.task}'")
 

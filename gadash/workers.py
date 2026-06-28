@@ -1,10 +1,12 @@
 import hashlib
 
+from werkzeug.security import check_password_hash, generate_password_hash
+
 from gadash.sheets import _get_workers_sheet
 
 
 def _hash_pw(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    return generate_password_hash(password)
 
 
 def _load_workers() -> list:
@@ -24,8 +26,15 @@ def _load_workers() -> list:
 
 
 def _verify_worker(name: str, password: str) -> bool:
-    ph = _hash_pw(password)
-    return any(w["שם"] == name and w["password_hash"] == ph for w in _load_workers())
+    for w in _load_workers():
+        if w["שם"] != name:
+            continue
+        stored = w["password_hash"]
+        # Support legacy SHA-256 hashes (64 hex chars) alongside new Werkzeug hashes
+        if len(stored) == 64 and all(c in "0123456789abcdef" for c in stored):
+            return stored == hashlib.sha256(password.encode()).hexdigest()
+        return check_password_hash(stored, password)
+    return False
 
 
 def _add_worker(name: str, password: str) -> bool:

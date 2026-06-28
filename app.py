@@ -1,6 +1,8 @@
 import asyncio
+import logging
 import math
 import os
+import re
 import secrets
 import threading
 import time
@@ -10,8 +12,17 @@ from io import BytesIO
 from urllib.parse import urlencode
 
 import pandas as pd
+from dotenv import load_dotenv
 from flask import (Flask, flash, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
+
+load_dotenv()
+
+try:
+    import google.generativeai as _genai
+except ImportError:
+    _genai = None
 
 import gadash.bot as _bot_module
 from gadash.audit import _flush_audit_to_sheets, _log_audit, _read_audit_log
@@ -32,22 +43,39 @@ from gadash.workers import (
 )
 
 PAGE_SIZE = 50
+_MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "gadash-dev-secret-key")
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=8)
 
-_current_password = os.environ.get("WEB_PASSWORD", "gadash2025")
-_worker_password  = os.environ.get("WORKER_PASSWORD", "worker2025")
+_logger = logging.getLogger(__name__)
 
+if app.secret_key == "gadash-dev-secret-key":
+    _logger.warning("[SECURITY] SECRET_KEY is the insecure default — set SECRET_KEY env var in production!")
+
+
+def _is_pw_hash(s: str) -> bool:
+    return s.startswith(("pbkdf2:", "scrypt:", "argon2:"))
+
+
+_current_password_hash: str = ""
+_worker_password: str = os.environ.get("WORKER_PASSWORD", "worker2025")
+
+_raw_web = os.environ.get("WEB_PASSWORD", "gadash2025")
 try:
     saved = load_passwords_from_sheet()
     if saved.get("web_password"):
-        _current_password = saved["web_password"]
+        _raw_web = saved["web_password"]
     if saved.get("worker_password"):
         _worker_password = saved["worker_password"]
 except Exception:
     pass
+
+_current_password_hash = _raw_web if _is_pw_hash(_raw_web) else generate_password_hash(_raw_web)
+
+if check_password_hash(_current_password_hash, "gadash2025"):
+    _logger.warning("[SECURITY] Manager is using the default password 'gadash2025' — change it immediately!")
 
 
 def _get_csrf_token() -> str:
@@ -146,7 +174,7 @@ def login():
             flash("שם עובד או סיסמה שגויים ❌", "danger")
             return render_template("login.html", selected_role="worker", form_name=name)
         else:
-            if pwd == _current_password:
+            if check_password_hash(_current_password_hash, pwd):
                 session.permanent = True
                 session["logged_in"] = True
                 return redirect(url_for("index"))
@@ -176,20 +204,20 @@ def health():
 @app.route("/change-password", methods=["GET", "POST"])
 @login_required
 def change_password():
-    global _current_password
+    global _current_password_hash
     if request.method == "POST":
         old  = request.form.get("old_password", "")
         new1 = request.form.get("new_password", "")
         new2 = request.form.get("confirm_password", "")
-        if old != _current_password:
+        if not check_password_hash(_current_password_hash, old):
             flash("הסיסמה הנוכחית שגויה ❌", "danger")
         elif new1 != new2:
             flash("הסיסמאות החדשות אינן תואמות ❌", "danger")
         elif len(new1) < 4:
             flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
         else:
-            _current_password = new1
-            save_passwords_to_sheet(_current_password, _worker_password)
+            _current_password_hash = generate_password_hash(new1)
+            save_passwords_to_sheet(_current_password_hash, _worker_password)
             flash("הסיסמה שונתה בהצלחה ✅", "success")
     return render_template("change_password.html")
 
@@ -204,13 +232,14 @@ def _apply_filters(df):
     task      = request.args.get("task",      "").strip()
 
     if q:
+        q_safe = re.escape(q)
         mask = df.apply(
-            lambda row: row.astype(str).str.contains(q, case=False, na=False).any(),
+            lambda row: row.astype(str).str.contains(q_safe, case=False, na=False).any(),
             axis=1,
         )
         df = df[mask]
     if client:
-        df = df[df["שם לקוח"].str.contains(client, case=False, na=False)]
+        df = df[df["שם לקוח"].str.contains(re.escape(client), case=False, na=False)]
     if date_from:
         df = df[df["תאריך"] >= date_from]
     if date_to:
@@ -363,11 +392,14 @@ def edit(row_id):
 @app.route("/delete/<int:row_id>", methods=["POST"])
 @login_required
 def delete(row_id):
-    df = load_data_from_gsheet()
-    detail = df.iloc[row_id].get("שם לקוח", str(row_id)) if row_id < len(df) else str(row_id)
-    delete_row_in_gsheet(row_id)
-    _log_audit("delete", "Web", f"row {row_id}: {detail}")
-    flash("הרשומה נמחקה ✅", "success")
+    try:
+        df = load_data_from_gsheet()
+        detail = df.iloc[row_id].get("שם לקוח", str(row_id)) if row_id < len(df) else str(row_id)
+        delete_row_in_gsheet(row_id)
+        _log_audit("delete", "Web", f"row {row_id}: {detail}")
+        flash("הרשומה נמחקה ✅", "success")
+    except Exception as e:
+        flash(f"שגיאה במחיקה: {e} ❌", "danger")
     return redirect(url_for("index"))
 
 
@@ -437,6 +469,12 @@ def import_data():
     if request.method == "POST":
         file = request.files.get("file")
         if file and file.filename.endswith(".xlsx"):
+            file.seek(0, 2)
+            file_size = file.tell()
+            file.seek(0)
+            if file_size > _MAX_UPLOAD_BYTES:
+                flash(f"הקובץ גדול מדי — מקסימום 5 MB ❌", "danger")
+                return render_template("import.html")
             try:
                 new_df = pd.read_excel(file)
                 existing_df = load_data_from_gsheet()
@@ -620,6 +658,27 @@ def worker_change_password():
     return redirect(url_for("worker_index"))
 
 
+@app.route("/worker/undo-last", methods=["POST"])
+@worker_required
+def worker_undo_last():
+    worker_name = session.get("worker_name", "")
+    try:
+        df = load_data_from_gsheet()
+        my = df[df["מזין"].str.contains(worker_name, case=False, na=False)]
+        if my.empty:
+            flash("אין עבודות למחיקה ❌", "danger")
+            return redirect(url_for("worker_index"))
+        last_idx    = my.index[-1]
+        last_client = str(my.iloc[-1].get("שם לקוח", ""))
+        last_date   = str(my.iloc[-1].get("תאריך", ""))
+        delete_row_in_gsheet(last_idx)
+        _log_audit("worker-undo", worker_name, f"row {last_idx}: {last_client} | {last_date}")
+        flash(f"הרשומה האחרונה נמחקה ✅ ({last_client} | {last_date})", "success")
+    except Exception as e:
+        flash(f"שגיאה: {e} ❌", "danger")
+    return redirect(url_for("worker_index"))
+
+
 @app.route("/worker", methods=["GET", "POST"])
 @worker_required
 def worker_index():
@@ -652,7 +711,9 @@ def worker_index():
 
     return render_template("worker_index.html",
                            worker_name=worker_name, today=today,
-                           recent=recent, my_count=my_count, **lists)
+                           recent=recent, my_count=my_count,
+                           task_options=sorted(VALID_TASKS),
+                           **lists)
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
@@ -874,7 +935,7 @@ def api_ai_summary():
         }
 
         gemini_key = os.environ.get("GEMINI_API_KEY")
-        if gemini_key:
+        if gemini_key and _genai:
             prompt = f"""אתה מנהל חקלאי מנוסה. כתוב סיכום חודשי מקצועי בעברית (5-6 משפטים בלבד) בהתבסס על:
 
 חודש {stats['month_label']}:
@@ -888,7 +949,6 @@ def api_ai_summary():
 
 כלול: השוואה לחודש הקודם, נקודת חוזק אחת, נקודת חולשה אחת, והמלצה מעשית אחת. כתוב בגוף ראשון רבים ("בחנו", "ראינו")."""
             try:
-                import google.generativeai as _genai
                 _genai.configure(api_key=gemini_key)
                 _model = _genai.GenerativeModel("gemini-2.5-flash")
                 r = _model.generate_content(prompt)
@@ -978,6 +1038,11 @@ def api_fields_coords():
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
+_dashboard_cache: dict = {}
+_dashboard_cache_time: float = 0.0
+_DASHBOARD_TTL = 120  # 2 minutes
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -992,6 +1057,13 @@ def dashboard():
 @app.route("/api/dashboard")
 @login_required
 def api_dashboard():
+    global _dashboard_cache, _dashboard_cache_time
+    date_from = request.args.get("from", "")
+    date_to   = request.args.get("to",   "")
+    cache_key = f"{date_from}|{date_to}"
+    if (_dashboard_cache.get("_key") == cache_key
+            and time.time() - _dashboard_cache_time < _DASHBOARD_TTL):
+        return jsonify(_dashboard_cache["data"])
     try:
         df = load_data_from_gsheet()
 
@@ -1006,9 +1078,6 @@ def api_dashboard():
         }
         if df.empty:
             return jsonify(empty_resp)
-
-        date_from = request.args.get("from", "")
-        date_to   = request.args.get("to",   "")
 
         now          = datetime.now()
         cur_m, cur_y = now.month, now.year
@@ -1092,7 +1161,7 @@ def api_dashboard():
         )
         monthly["hours"] = monthly["hours"].round(1)
 
-        return jsonify({
+        result = {
             "kpis":          kpis,
             "daily_trend":   daily.to_dict(orient="records"),
             "task_dist":     task_dist,
@@ -1101,9 +1170,25 @@ def api_dashboard():
             "crop_hours":    crop_h.to_dict(orient="records"),
             "monthly_trend": monthly.to_dict(orient="records"),
             "updated_at":    datetime.now().strftime("%H:%M:%S"),
-        })
+        }
+        _dashboard_cache = {"_key": cache_key, "data": result}
+        _dashboard_cache_time = time.time()
+        return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ── Error handlers ────────────────────────────────────────────────────────────
+
+@app.errorhandler(404)
+def not_found(e):
+    return render_template("404.html"), 404
+
+
+@app.errorhandler(500)
+def server_error(e):
+    _logger.exception("500 error: %s", e)
+    return render_template("500.html"), 500
 
 
 # ── Background threads & entry point ──────────────────────────────────────────

@@ -51,6 +51,9 @@ def _read_audit_log(limit: int = 200) -> list:
     return []
 
 
+_MAX_LOG_BYTES = 1_000_000  # 1 MB
+
+
 def _flush_audit_to_sheets():
     while True:
         time.sleep(30)
@@ -63,5 +66,12 @@ def _flush_audit_to_sheets():
             ws = _get_audit_sheet()
             if ws:
                 ws.append_rows(rows, value_input_option="USER_ENTERED")
+                # Truncate local write-ahead buffer once safely flushed to sheet
+                with _audit_lock:
+                    try:
+                        if os.path.exists(AUDIT_LOG_FILE) and os.path.getsize(AUDIT_LOG_FILE) > _MAX_LOG_BYTES:
+                            open(AUDIT_LOG_FILE, "w").close()
+                    except Exception:
+                        pass
         except Exception as e:
             print(f"[Audit] flush error: {e}")

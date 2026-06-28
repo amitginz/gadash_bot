@@ -260,10 +260,12 @@ def delete_row_in_gsheet(row_id: int):
 
 
 def bulk_delete_rows_in_gsheet(row_ids: list):
-    sheet = _get_sheet()
-    for df_idx in sorted(row_ids, reverse=True):
-        sheet.delete_rows(df_idx + 2)
-    _invalidate_cache()
+    df = load_data_from_gsheet()
+    valid_ids = [i for i in row_ids if i < len(df)]
+    if not valid_ids:
+        return
+    remaining = df.drop(index=valid_ids).reset_index(drop=True)
+    save_data_to_gsheet(remaining)
 
 
 def patch_cell_in_gsheet(row_id: int, field: str, value: str):

@@ -6,6 +6,7 @@ gspread==6.1.2
 google-auth==2.29.0
 google-generativeai==0.8.5
 gunicorn==21.2.0
-python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7
 Flask-WTF==1.2.1
 Flask-Limiter==3.5.0
+python-dotenv==1.0.1

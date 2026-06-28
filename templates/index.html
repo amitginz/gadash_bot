@@ -1,249 +1,162 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="csrf-token" content="{{ csrf_token() }}" />
-  <title>דוח עבודות גד"ש</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet" />
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" />
-  <style>
-    :root {
-      --navy: #1a2f4e;
-      --navy-mid: #2a4a72;
-      --blue: #3578c8;
-      --blue-light: #e8f0fb;
-      --green: #1e8c4e;
-      --amber: #d97706;
-      --surface: #f5f7fa;
-      --card-radius: 14px;
-    }
+{% extends "base.html" %}
+{% block title %}דוח עבודות{% endblock %}
+{% block nav_home %}active{% endblock %}
 
-    body { background: var(--surface); font-family: 'Segoe UI', 'Arial Hebrew', sans-serif; color: #1e293b; }
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
 
-    /* ── Navbar ── */
-    .top-nav {
-      background: var(--navy);
-      padding: .7rem 1.5rem;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 2px 8px rgba(0,0,0,.25);
-    }
-    .top-nav .brand { color: #fff; font-weight: 700; font-size: 1.1rem; text-decoration: none; }
-    .top-nav .menu-btn {
-      background: none; border: none; color: #fff; font-size: 1.4rem;
-      cursor: pointer; padding: .2rem .4rem; line-height: 1;
-    }
-    /* ── Sidebar offcanvas ── */
-    .offcanvas { max-width: 270px; background: #0f2540; color: #fff; }
-    .offcanvas-header { background: var(--navy); border-bottom: 1px solid rgba(255,255,255,.1); }
-    .offcanvas-header .offcanvas-title { font-weight: 700; color: #fff; }
-    .offcanvas-header .btn-close { filter: invert(1); }
-    .sidebar-section { font-size: .7rem; font-weight: 700; text-transform: uppercase;
-                        letter-spacing: .08em; color: rgba(255,255,255,.4);
-                        padding: 1rem 1.2rem .3rem; }
-    .sidebar-link {
-      display: flex; align-items: center; gap: .7rem;
-      padding: .6rem 1.2rem; color: rgba(255,255,255,.8);
-      text-decoration: none; font-size: .9rem; transition: background .15s, color .15s;
-      border-radius: 0;
-    }
-    .sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
-    .sidebar-link.active { background: rgba(255,255,255,.12); color: #fff; font-weight: 600; }
-    .sidebar-link i { width: 1.1rem; text-align: center; opacity: .75; font-size: 1rem; }
-    .sidebar-divider { border-color: rgba(255,255,255,.1); margin: .3rem 0; }
+{% block extra_style %}
+:root {
+  --blue: #3578c8;
+  --blue-light: #e8f0fb;
+  --green: #1e8c4e;
+  --amber: #d97706;
+  --surface: #f5f7fa;
+  --card-radius: 14px;
+}
 
-    /* ── Hero header ── */
-    .hero {
-      background: linear-gradient(135deg, var(--navy) 0%, var(--navy-mid) 60%, #3a6fa8 100%);
-      color: #fff;
-      padding: 2rem 1.5rem 1.5rem;
-    }
-    .hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0 0 .2rem; }
-    .hero .subtitle { font-size: .85rem; opacity: .75; }
+body { color: #1e293b; }
 
-    /* ── Stat cards ── */
-    .stats-row { margin-top: -1.1rem; }
-    .stat-card {
-      background: #fff;
-      border-radius: var(--card-radius);
-      box-shadow: 0 2px 10px rgba(0,0,0,.08);
-      padding: 1rem 1.2rem;
-      display: flex;
-      align-items: center;
-      gap: .9rem;
-      height: 100%;
-    }
-    .stat-icon {
-      width: 44px; height: 44px;
-      border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 1.3rem;
-      flex-shrink: 0;
-    }
-    .stat-icon.blue   { background: #dbeafe; color: #2563eb; }
-    .stat-icon.green  { background: #dcfce7; color: var(--green); }
-    .stat-icon.amber  { background: #fef3c7; color: var(--amber); }
-    .stat-icon.purple { background: #ede9fe; color: #7c3aed; }
-    .stat-label { font-size: .72rem; color: #64748b; margin: 0; line-height: 1.3; }
-    .stat-value { font-size: 1.3rem; font-weight: 700; color: var(--navy); margin: 0; }
+/* ── Hero header ── */
+.hero h1 { font-size: 1.55rem; font-weight: 700; margin: 0 0 .2rem; }
+.hero .subtitle { font-size: .85rem; opacity: .75; }
 
-    /* ── Filter card ── */
-    .filter-card {
-      background: #fff;
-      border-radius: var(--card-radius);
-      box-shadow: 0 1px 5px rgba(0,0,0,.06);
-      padding: 1.1rem 1.4rem;
-    }
-    .filter-card .form-control,
-    .filter-card .form-select { font-size: .88rem; border-radius: 8px; }
-    .filter-card .form-label  { font-size: .8rem; font-weight: 600; color: #475569; margin-bottom: .3rem; }
-    .btn-filter  { background: var(--blue); border: none; border-radius: 8px; font-size: .88rem; }
-    .btn-filter:hover { background: var(--navy-mid); }
-    .btn-reset   { border-radius: 8px; font-size: .88rem; }
+/* ── Stat cards ── */
+.stats-row { margin-top: -1.1rem; }
+.stat-card {
+  background: #fff;
+  border-radius: var(--card-radius);
+  box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  padding: 1rem 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: .9rem;
+  height: 100%;
+}
+.stat-icon {
+  width: 44px; height: 44px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem;
+  flex-shrink: 0;
+}
+.stat-icon.blue   { background: #dbeafe; color: #2563eb; }
+.stat-icon.green  { background: #dcfce7; color: var(--green); }
+.stat-icon.amber  { background: #fef3c7; color: var(--amber); }
+.stat-icon.purple { background: #ede9fe; color: #7c3aed; }
+.stat-label { font-size: .72rem; color: #64748b; margin: 0; line-height: 1.3; }
+.stat-value { font-size: 1.3rem; font-weight: 700; color: var(--navy); margin: 0; }
 
-    /* ── Search bar ── */
-    .search-wrap { position: relative; }
-    .search-wrap .bi-search {
-      position: absolute; top: 50%; left: auto; right: .75rem;
-      transform: translateY(-50%);
-      color: #94a3b8; pointer-events: none;
-    }
-    .search-input { padding-right: 2.2rem !important; }
+/* ── Filter card ── */
+.filter-card {
+  background: #fff;
+  border-radius: var(--card-radius);
+  box-shadow: 0 1px 5px rgba(0,0,0,.06);
+  padding: 1.1rem 1.4rem;
+}
+.filter-card .form-control,
+.filter-card .form-select { font-size: .88rem; border-radius: 8px; }
+.filter-card .form-label  { font-size: .8rem; font-weight: 600; color: #475569; margin-bottom: .3rem; }
+.btn-filter  { background: var(--blue); border: none; border-radius: 8px; font-size: .88rem; }
+.btn-filter:hover { background: var(--navy-mid); }
+.btn-reset   { border-radius: 8px; font-size: .88rem; }
 
-    /* ── Action bar ── */
-    .action-bar {
-      display: flex; align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap; gap: .5rem;
-    }
-    .result-badge {
-      background: var(--blue-light); color: var(--navy-mid);
-      border-radius: 20px; padding: .2rem .75rem;
-      font-size: .8rem; font-weight: 600;
-    }
+/* ── Search bar ── */
+.search-wrap { position: relative; }
+.search-wrap .bi-search {
+  position: absolute; top: 50%; left: auto; right: .75rem;
+  transform: translateY(-50%);
+  color: #94a3b8; pointer-events: none;
+}
+.search-input { padding-right: 2.2rem !important; }
 
-    /* ── Table ── */
-    .table-card {
-      background: #fff;
-      border-radius: var(--card-radius);
-      box-shadow: 0 1px 5px rgba(0,0,0,.06);
-      overflow: hidden;
-    }
-    .table { margin: 0; font-size: .875rem; }
-    .table thead th {
-      background: var(--navy);
-      color: #fff;
-      font-weight: 600;
-      border: none;
-      padding: .8rem .9rem;
-      white-space: nowrap;
-      cursor: pointer;
-      user-select: none;
-    }
-    .table thead th:hover { background: var(--navy-mid); }
-    .table thead th .sort-icon { opacity: .45; margin-inline-start: .3rem; font-size: .7rem; }
-    .table thead th.asc  .sort-icon::after { content: " ▲"; opacity: 1; }
-    .table thead th.desc .sort-icon::after { content: " ▼"; opacity: 1; }
-    .table tbody tr { transition: background .1s; }
-    .table tbody tr:hover { background: #f0f5ff; }
-    .table td { vertical-align: middle; padding: .6rem .9rem; border-color: #e2e8f0; }
+/* ── Action bar ── */
+.action-bar {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap; gap: .5rem;
+}
+.result-badge {
+  background: var(--blue-light); color: var(--navy-mid);
+  border-radius: 20px; padding: .2rem .75rem;
+  font-size: .8rem; font-weight: 600;
+}
 
-    /* Task badges */
-    .badge-task {
-      padding: .25rem .6rem; border-radius: 20px; font-size: .75rem; font-weight: 600;
-    }
-    .badge-חריש   { background: #fef3c7; color: #92400e; }
-    .badge-ריסוס  { background: #dcfce7; color: #166534; }
-    .badge-קציר   { background: #dbeafe; color: #1e40af; }
-    .badge-דיסוק  { background: #ede9fe; color: #5b21b6; }
-    .badge-אחר    { background: #f1f5f9; color: #475569; }
+/* ── Table ── */
+.table-card {
+  background: #fff;
+  border-radius: var(--card-radius);
+  box-shadow: 0 1px 5px rgba(0,0,0,.06);
+  overflow: hidden;
+}
+.table { margin: 0; font-size: .875rem; }
+.table thead th {
+  background: var(--navy);
+  color: #fff;
+  font-weight: 600;
+  border: none;
+  padding: .8rem .9rem;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.table thead th:hover { background: var(--navy-mid); }
+.table thead th .sort-icon { opacity: .45; margin-inline-start: .3rem; font-size: .7rem; }
+.table thead th.asc  .sort-icon::after { content: " ▲"; opacity: 1; }
+.table thead th.desc .sort-icon::after { content: " ▼"; opacity: 1; }
+.table tbody tr { transition: background .1s; }
+.table tbody tr:hover { background: #f0f5ff; }
+.table td { vertical-align: middle; padding: .6rem .9rem; border-color: #e2e8f0; }
 
-    /* Action buttons */
-    .btn-edit   { color: var(--blue); background: var(--blue-light); border: none; border-radius: 7px; padding: .25rem .55rem; font-size: .82rem; }
-    .btn-edit:hover  { background: #bfdbfe; color: #1d4ed8; }
-    .btn-del    { color: #dc2626; background: #fee2e2; border: none; border-radius: 7px; padding: .25rem .55rem; font-size: .82rem; }
-    .btn-del:hover   { background: #fecaca; }
+/* Task badges */
+.badge-task {
+  padding: .25rem .6rem; border-radius: 20px; font-size: .75rem; font-weight: 600;
+}
+.badge-חריש   { background: #fef3c7; color: #92400e; }
+.badge-ריסוס  { background: #dcfce7; color: #166534; }
+.badge-קציר   { background: #dbeafe; color: #1e40af; }
+.badge-דיסוק  { background: #ede9fe; color: #5b21b6; }
+.badge-אחר    { background: #f1f5f9; color: #475569; }
 
-    /* ── Empty state ── */
-    .empty-state { text-align: center; padding: 4rem 2rem; color: #94a3b8; }
-    .empty-icon  { font-size: 3.5rem; margin-bottom: .75rem; opacity: .35; }
+/* Action buttons */
+.btn-edit   { color: var(--blue); background: var(--blue-light); border: none; border-radius: 7px; padding: .25rem .55rem; font-size: .82rem; }
+.btn-edit:hover  { background: #bfdbfe; color: #1d4ed8; }
+.btn-del    { color: #dc2626; background: #fee2e2; border: none; border-radius: 7px; padding: .25rem .55rem; font-size: .82rem; }
+.btn-del:hover   { background: #fecaca; }
 
-    /* ── Modal ── */
-    .modal-content { border-radius: 14px; border: none; }
-    .modal-header  { border-bottom: none; }
-    .modal-footer  { border-top: none; }
+/* ── Empty state ── */
+.empty-state { text-align: center; padding: 4rem 2rem; color: #94a3b8; }
+.empty-icon  { font-size: 3.5rem; margin-bottom: .75rem; opacity: .35; }
 
-    /* ── Inline edit ── */
-    td.editable { cursor: pointer; }
-    td.editable:hover { background: #fffbeb !important; }
-    td.editable input { border: 1px solid #3578c8; border-radius: 4px; padding: 2px 6px; width: 100%; font-size: .875rem; }
+/* ── Modal ── */
+.modal-content { border-radius: 14px; border: none; }
+.modal-header  { border-bottom: none; }
+.modal-footer  { border-top: none; }
 
-    /* ── Mobile card view ── */
-    @media (max-width: 767px) {
-      .table-responsive { display: none !important; }
-      .mobile-cards { display: block !important; }
-    }
-    @media (min-width: 768px) {
-      .mobile-cards { display: none !important; }
-    }
-    .mobile-card {
-      background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
-      padding: 1rem; margin-bottom: .75rem;
-    }
-    .mobile-card .mc-client { font-weight: 700; font-size: 1rem; color: #1a2f4e; }
-    .mobile-card .mc-meta   { font-size: .82rem; color: #64748b; margin: .2rem 0; }
-    .mobile-card .mc-actions { margin-top: .6rem; display: flex; gap: .4rem; flex-wrap: wrap; }
-  </style>
-</head>
-<body>
+/* ── Inline edit ── */
+td.editable { cursor: pointer; }
+td.editable:hover { background: #fffbeb !important; }
+td.editable input { border: 1px solid #3578c8; border-radius: 4px; padding: 2px 6px; width: 100%; font-size: .875rem; }
 
-<!-- Navbar -->
-<nav class="top-nav">
-  <a class="brand" href="/">🌾 גד"ש — ניהול עבודות</a>
-  <button class="menu-btn" data-bs-toggle="offcanvas" data-bs-target="#sideMenu" aria-label="תפריט">
-    <i class="bi bi-list"></i>
-  </button>
-</nav>
+/* ── Mobile card view ── */
+@media (max-width: 767px) {
+  .table-responsive { display: none !important; }
+  .mobile-cards { display: block !important; }
+}
+@media (min-width: 768px) {
+  .mobile-cards { display: none !important; }
+}
+.mobile-card {
+  background: #fff; border-radius: 12px; box-shadow: 0 1px 5px rgba(0,0,0,.07);
+  padding: 1rem; margin-bottom: .75rem;
+}
+.mobile-card .mc-client { font-weight: 700; font-size: 1rem; color: #1a2f4e; }
+.mobile-card .mc-meta   { font-size: .82rem; color: #64748b; margin: .2rem 0; }
+.mobile-card .mc-actions { margin-top: .6rem; display: flex; gap: .4rem; flex-wrap: wrap; }
+{% endblock %}
 
-<!-- Sidebar offcanvas -->
-<div class="offcanvas offcanvas-end" tabindex="-1" id="sideMenu">
-  <div class="offcanvas-header">
-    <span class="offcanvas-title">🌾 תפריט ניווט</span>
-    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
-  </div>
-  <div class="offcanvas-body p-0">
-
-    <div class="sidebar-section">עבודות</div>
-    <a href="/" class="sidebar-link active"><i class="bi bi-house-fill"></i> דף ראשי</a>
-    <a href="/dashboard" class="sidebar-link"><i class="bi bi-speedometer2"></i> דשבורד ניתוח</a>
-    <a href="/add" class="sidebar-link"><i class="bi bi-plus-circle-fill"></i> הוספת רשומה</a>
-
-    <hr class="sidebar-divider">
-    <div class="sidebar-section">דוחות</div>
-    <a href="/summary" class="sidebar-link"><i class="bi bi-bar-chart-fill"></i> דוח חודשי</a>
-    <a href="/field-report" class="sidebar-link"><i class="bi bi-layers-fill"></i> שעות לפי חלקה</a>
-    <a href="/fields-map" class="sidebar-link"><i class="bi bi-geo-alt-fill"></i> מפת שדות</a>
-    <a href="/client-report" class="sidebar-link"><i class="bi bi-person-bar-chart"></i> דוח לקוח</a>
-    <a href="/print" class="sidebar-link" target="_blank"><i class="bi bi-printer-fill"></i> הדפסה</a>
-
-    <hr class="sidebar-divider">
-    <div class="sidebar-section">ניהול נתונים</div>
-    <a href="/export" class="sidebar-link"><i class="bi bi-file-earmark-excel-fill"></i> ייצוא Excel</a>
-    <a href="/export/csv" class="sidebar-link"><i class="bi bi-filetype-csv"></i> ייצוא CSV</a>
-    <a href="/import" class="sidebar-link"><i class="bi bi-upload"></i> ייבוא Excel</a>
-    <a href="/audit" class="sidebar-link"><i class="bi bi-clock-history"></i> יומן פעילות</a>
-
-    <hr class="sidebar-divider">
-    <div class="sidebar-section">הגדרות</div>
-    <a href="/workers" class="sidebar-link"><i class="bi bi-people-fill"></i> ניהול עובדים</a>
-    <a href="/change-password" class="sidebar-link"><i class="bi bi-key-fill"></i> שינוי סיסמה</a>
-    <a href="/logout" class="sidebar-link"><i class="bi bi-box-arrow-right"></i> יציאה</a>
-
-  </div>
-</div>
-
+{% block content %}
 <!-- Hero -->
 <div class="hero">
   <div class="container-lg" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.8rem;">
@@ -341,7 +254,7 @@
         <input type="text" name="q" id="globalSearch" class="form-control form-control-sm"
                placeholder="חיפוש חופשי — לקוח, תאריך, עבודה, חלקה…"
                value="{{ q_filter }}" autocomplete="off">
-        <span id="globalSearchCount" class="text-muted small flex-shrink-0" style="white-space:nowrap;"></span>
+        <span id="globalSearchHint" class="text-muted small flex-shrink-0" style="white-space:nowrap;"></span>
         <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0" id="toggleFilters"
                 style="white-space:nowrap;">
           <i class="bi bi-funnel{% if client_filter or date_from or date_to or task_filter %}-fill text-primary{% endif %}"></i>
@@ -498,8 +411,8 @@
     <div class="empty-state">
       <div class="empty-icon">📭</div>
       <p class="fw-semibold mb-1">אין נתונים להצגה</p>
-      <p class="small text-muted mb-3">{% if client_filter or date_filter or task_filter %}נסה לשנות את הסינון{% else %}הוסף את העבודה הראשונה{% endif %}</p>
-      {% if client_filter or date_filter or task_filter %}
+      <p class="small text-muted mb-3">{% if client_filter or date_from or date_to or task_filter %}נסה לשנות את הסינון{% else %}הוסף את העבודה הראשונה{% endif %}</p>
+      {% if client_filter or date_from or date_to or task_filter %}
       <a href="/" class="btn btn-outline-secondary btn-sm">נקה סינון</a>
       {% else %}
       <a href="/add" class="btn btn-success btn-sm">➕ הוסף עבודה</a>
@@ -593,7 +506,7 @@
               <label class="form-label fw-semibold" style="font-size:.85rem;">עבודה *</label>
               <select name="עבודה" class="form-select form-select-sm" required>
                 <option value="">בחר…</option>
-                {% for t in ['חריש','ריסוס','קציר','דיסוק','אחר'] %}
+                {% for t in task_options %}
                 <option>{{ t }}</option>
                 {% endfor %}
               </select>
@@ -671,9 +584,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% block scripts %}
 <script>
   // Delete modal — POST form
   function confirmDelete(rowId) {
@@ -729,17 +642,7 @@
     });
   }
 
-  // Client live search (filter-as-you-type with 400ms debounce)
-  const searchInput = document.getElementById('clientSearch');
-  if (searchInput) {
-    let timer;
-    searchInput.addEventListener('input', () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => document.getElementById('filterForm').submit(), 400);
-    });
-  }
-
-  // Advanced filter panel toggle — opens always; closes only when no filter values are filled
+  // Advanced filter panel toggle
   document.getElementById('toggleFilters')?.addEventListener('click', () => {
     const panel = document.getElementById('advFilters');
     if (!panel) return;
@@ -828,7 +731,7 @@
     });
   }
 
-  // CSRF token for AJAX — auto-inject into all forms
+  // CSRF token — auto-inject into all forms
   const CSRF = document.querySelector('meta[name="csrf-token"]')?.content || '';
   document.querySelectorAll('form').forEach(form => {
     if (!form.querySelector('[name="csrf_token"]')) {
@@ -838,10 +741,11 @@
     }
   });
 
-  // Inline cell editing — double-click any editable cell
+  // Inline cell editing — double-click (desktop) or double-tap (mobile)
   document.querySelectorAll('td.editable').forEach(td => {
     td.title = 'לחץ פעמיים לעריכה';
-    td.addEventListener('dblclick', () => {
+    let _tapTimer = null;
+    const _activateEdit = () => {
       if (td.querySelector('input')) return;
       const rowId = td.closest('tr').dataset.rowId;
       const field = td.dataset.field;
@@ -875,37 +779,33 @@
         if (e.key === 'Enter')  { inp.blur(); }
         if (e.key === 'Escape') { td.textContent = orig; }
       });
-    });
+    };
+    td.addEventListener('dblclick', _activateEdit);
+    td.addEventListener('touchstart', () => {
+      if (_tapTimer) { clearTimeout(_tapTimer); _tapTimer = null; _activateEdit(); }
+      else { _tapTimer = setTimeout(() => { _tapTimer = null; }, 350); }
+    }, { passive: true });
   });
 
-  // Global search — filters all visible rows across every column
+  // Global search — debounce auto-submit for server-side search across all data
   const globalSearch = document.getElementById('globalSearch');
-  const globalCount  = document.getElementById('globalSearchCount');
-  if (globalSearch && table) {
+  const globalHint   = document.getElementById('globalSearchHint');
+  if (globalSearch) {
+    let searchTimer;
     globalSearch.addEventListener('input', () => {
-      const q = globalSearch.value.trim().toLowerCase();
-      let visible = 0;
-      table.querySelectorAll('tbody tr').forEach(tr => {
-        const text = tr.innerText.toLowerCase();
-        const show = !q || text.includes(q);
-        tr.style.display = show ? '' : 'none';
-        if (show) visible++;
-      });
-      globalCount.textContent = q ? `${visible} תוצאות` : '';
+      clearTimeout(searchTimer);
+      const q = globalSearch.value.trim();
+      if (globalHint) globalHint.textContent = q ? '...' : '';
+      searchTimer = setTimeout(() => filterForm && filterForm.submit(), 400);
     });
     globalSearch.addEventListener('keydown', e => {
-      if (e.key === 'Escape') { globalSearch.value = ''; globalSearch.dispatchEvent(new Event('input')); }
+      if (e.key === 'Escape') {
+        globalSearch.value = '';
+        clearTimeout(searchTimer);
+        if (globalHint) globalHint.textContent = '';
+        filterForm && filterForm.submit();
+      }
     });
   }
-
-  // CSRF inject into quick-add form too
-  document.querySelectorAll('form').forEach(form => {
-    if (!form.querySelector('[name="csrf_token"]')) {
-      const inp = document.createElement('input');
-      inp.type = 'hidden'; inp.name = 'csrf_token'; inp.value = CSRF;
-      form.appendChild(inp);
-    }
-  });
 </script>
-</body>
-</html>
+{% endblock %}
