@@ -1,114 +1,194 @@
-# Gadash Bot
+# Gadash Bot — מערכת ניהול עבודות גד"ש
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20App-2563eb?style=for-the-badge&logo=fly.io)](https://gadash-bot.fly.dev/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-gadash--bot.fly.dev-2563eb?style=for-the-badge&logo=fly.io&logoColor=white)](https://gadash-bot.fly.dev/)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
+[![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
 
-A combined Flask web app and Telegram bot for managing contractor work reports for Gadash Sdeh Eliyahu. Field workers log jobs via Telegram; managers view, edit, and export all records from a web dashboard. Everything syncs automatically to a shared Google Sheet.
+מערכת לניהול עבודות שדה עבור קבלן חקלאי. עובדי שדה מזינים עבודות דרך **בוט טלגרם** בעברית; מנהלים צופים, עורכים ומייצאים את כל הנתונים מ**לוח בקרה ויבי**. הכול מסתנכרן אוטומטית ל-**Google Sheets**.
 
-## Features
+---
 
-- **Telegram Bot** — guided conversation flow for logging a new work entry (client, date, task type, plot, quantity, tool, operator, notes)
-- **Web Dashboard** — view all records, add/edit/delete entries manually
-- **Excel Import** — bulk-upload work records from `.xlsx` files
-- **Excel Export** — download the full dataset as a formatted spreadsheet
-- **Google Sheets Sync** — all records are read from and written to a live Google Sheet
-- **Deployed on Fly.io** — runs as a single Gunicorn server with the bot on a background thread
+## תצוגה חיה
 
-## Tech Stack
+**[gadash-bot.fly.dev](https://gadash-bot.fly.dev/)** — סיסמת מנהל: `gadash2025`
 
-| Layer | Technology |
+---
+
+## ארכיטקטורה
+
+```
+┌─────────────────────┐     HTTP/JSON      ┌──────────────────────┐
+│   Web Browser       │ ◄────────────────► │   Flask App          │
+│   HTML5 / Jinja2    │                    │   app.py             │
+│   Bootstrap 5 RTL   │                    │                      │
+└─────────────────────┘                    │   gadash/ package    │
+                                           │   ├── models.py      │
+┌─────────────────────┐     async calls    │   ├── sheets.py      │
+│   Telegram App      │ ◄────────────────► │   ├── service.py     │
+│   ConversationBot   │                    │   ├── bot.py         │
+│   16 states         │                    │   ├── audit.py       │
+└─────────────────────┘                    │   └── workers.py     │
+                                           └──────────┬───────────┘
+                                                      │ gspread API
+                                           ┌──────────▼───────────┐
+                                           │   Google Sheets       │
+                                           │   "Gadash Data"       │
+                                           │   6 worksheets        │
+                                           └──────────────────────┘
+```
+
+---
+
+## יכולות
+
+### בוט טלגרם
+- שיחה מודרכת בעברית — 16 מצבי שיחה (ConversationHandler)
+- הזנת עבודה ב-12 שלבים: לקוח, תאריך, סוג עבודה, חלקה, גידול, כמות, שעות, כלי, מפעיל, הערות
+- תמיכה בתמונה כהערה
+- `/undo` — ביטול הרשומה האחרונה
+- חיפוש לפי שם לקוח
+- שידורים אוטומטיים: סיכום יומי 08:00, תזכורת 18:00, דוח שבועי בימי שני
+
+### לוח בקרה למנהל
+- טבלת רשומות עם חיפוש גלובלי, סינון ועריכה מוטבעת
+- Quick-Add modal — הוספה מהירה ללא טעינת דף
+- מחיקה מרובה ושכפול רשומות
+- ייצוא Excel / CSV
+- ייבוא Excel עם deduplication אוטומטי
+- דוח חודשי — 3 גרפים (Chart.js)
+- דוח שעות לפי חלקה / גידול
+- דוח לקוח
+- מפת חלקות (Leaflet.js + GPS מ-Google Sheets)
+- סיכום AI (Gemini 2.5 Flash) — fallback לתבנית עברית
+
+### פורטל עובד (`/worker`)
+- טופס הזנה מהיר
+- היסטוריה אישית בלבד
+
+### אבטחה ותפעול
+- CSRF protection על כל טופס ובקשת AJAX
+- Rate limiting — 5 בקשות/דקה
+- Session timeout — 8 שעות
+- סיסמאות מנהל ועובד — Werkzeug PBKDF2-SHA256
+- לוג ביקורת (audit) — כתיבה כפולה לקובץ + AuditLog sheet
+- cache בזיכרון עם TTL של 5 דקות + threading.Lock
+
+---
+
+## מבנה הקבצים
+
+```
+gadash_bot/
+├── app.py                  # Flask app — routes, auth, CSRF, rate limiting
+├── gadash/
+│   ├── models.py           # WorkEntry dataclass, COLUMNS, VALID_TASKS
+│   ├── sheets.py           # Google Sheets I/O + in-memory cache
+│   ├── service.py          # create_entry() — writes + audit
+│   ├── bot.py              # Telegram ConversationHandler (16 states)
+│   ├── audit.py            # Dual audit log (file + Sheets)
+│   ├── workers.py          # Worker CRUD + password hashing
+│   └── subscribers.py      # Telegram broadcast subscriber list
+├── templates/              # Jinja2 HTML templates
+├── static/                 # CSS, JS, Chart.js
+├── tests/
+│   └── test_app.py         # Flask test client tests
+├── requirements.txt
+├── Dockerfile
+├── fly.toml
+└── Procfile
+```
+
+---
+
+## Google Sheets — מבנה
+
+| Worksheet | תוכן |
 |---|---|
-| Web framework | Python + Flask |
-| Telegram bot | python-telegram-bot 20.x (async) |
-| Data | pandas, Google Sheets via gspread |
-| Auth | Google Service Account (google-auth) |
-| Server | Gunicorn |
-| Deployment | Fly.io / Render (Docker or Procfile) |
+| `Sheet1` | נתוני עבודה ראשיים (11 עמודות עבריות) |
+| `Settings` | סיסמאות מנהל ועובד (key-value) |
+| `Workers` | רישום עובדים + password hash + telegram_id |
+| `FieldCoords` | קואורדינטות GPS לפי שם חלקה |
+| `AuditLog` | לוג פעולות (ts, action, user, detail) |
+| `Subscribers` | chat_ids לשידורי הבוט |
 
-## Telegram Bot Flow
-
-The bot uses a 10-step `ConversationHandler`:
-
+עמודות Sheet1:
 ```
-/start → confirm intent → menu
-  ├── הזן עבודה חדשה  →  client → date → task → plot → amount → tool → operator → notes → confirm → save to Sheet
-  ├── 5 עבודות אחרונות  →  shows last 5 rows from the Sheet
-  └── סיים  →  end conversation
+שם לקוח | תאריך | עבודה | שם חלקה | גידול | כמות | שעות | כלי | מפעיל | הערות | מזין
 ```
 
-## Google Sheet Format
+---
 
-The target sheet must be named **`Gadash Data`** and have these headers in row 1:
+## התקנה מקומית
 
-```
-שם לקוח | תאריך | עבודה | שם חלקה | כמות | כלי | מפעיל | הערות | מזין
-```
-
-## Getting Started
-
-### Prerequisites
+### דרישות מקדימות
 
 - Python 3.11+
-- A Telegram bot token (from [@BotFather](https://t.me/BotFather))
-- A Google Cloud service account with Sheets + Drive API enabled
-- A Google Sheet named `Gadash Data` shared with the service account
+- Telegram bot token (מ-[@BotFather](https://t.me/BotFather))
+- Google Cloud service account עם Sheets + Drive API
+- Google Sheet בשם `Gadash Data` משותף עם ה-service account
 
-### Local Setup
+### הרצה
 
-1. **Clone the repository**
+```bash
+git clone https://github.com/amitginz/gadash_bot.git
+cd gadash_bot
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-   ```bash
-   git clone https://github.com/amitginz/gadash_bot.git
-   cd gadash_bot
-   ```
+צור קובץ `.env`:
 
-2. **Create a virtual environment and install dependencies**
+```env
+BOT_TOKEN=your_telegram_token
+GOOGLE_CREDS={"type":"service_account",...}
+SECRET_KEY=your_secret_key
+WEB_PASSWORD=gadash2025
+WORKER_PASSWORD=worker2025
+GEMINI_API_KEY=optional_for_ai_summaries
+```
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate      # Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+```bash
+python app.py
+```
 
-3. **Configure environment variables**
+הדשבורד זמין ב-`http://localhost:8080`.
 
-   ```bash
-   cp .env.example .env
-   ```
+### הרצת בדיקות
 
-   Fill in your values in `.env`:
+```bash
+pytest tests/ -v
+```
 
-   | Variable | Description |
-   |---|---|
-   | `BOT_TOKEN` | Telegram bot token from BotFather |
-   | `GOOGLE_CREDS` | Full Google service account JSON as a single-line string |
+---
 
-   For local development you can alternatively place `credentials.json` in the project root instead of setting `GOOGLE_CREDS`.
-
-4. **Run the app**
-
-   ```bash
-   flask run
-   ```
-
-   The web dashboard is at `http://localhost:5000` and the Telegram bot starts automatically on a background thread.
-
-## Deployment
-
-### Fly.io
+## פריסה — Fly.io
 
 ```bash
 flyctl launch
-flyctl secrets set BOT_TOKEN="your-token" GOOGLE_CREDS='{"type":"service_account",...}'
+flyctl secrets set BOT_TOKEN="..." GOOGLE_CREDS='{"type":"service_account",...}' SECRET_KEY="..."
 flyctl deploy
 ```
 
-### Render / other hosts
+> חשוב: השתמש ב-`--workers 1` ב-gunicorn — בוט הטלגרם וה-cache בזיכרון אינם multi-process safe.
 
-Set `BOT_TOKEN` and `GOOGLE_CREDS` as environment variables in your host's dashboard. The `Procfile` starts Gunicorn automatically:
+---
 
-```
-web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2
-```
+## משתני סביבה
+
+| משתנה | תיאור |
+|---|---|
+| `BOT_TOKEN` | טוקן בוט טלגרם |
+| `GOOGLE_CREDS` | JSON של service account (עדיפות על `credentials.json`) |
+| `SECRET_KEY` | Flask session secret |
+| `WEB_PASSWORD` | סיסמת מנהל ראשונית (מוחלף על ידי Settings sheet) |
+| `WORKER_PASSWORD` | סיסמת עובד ראשונית |
+| `WEB_APP_URL` | URL ציבורי — מפעיל Webhook mode בטלגרם |
+| `GEMINI_API_KEY` | מפתח Gemini לסיכומי AI |
+| `PORT` | פורט HTTP (ברירת מחדל 8080) |
+
+---
 
 ## Credits
 
