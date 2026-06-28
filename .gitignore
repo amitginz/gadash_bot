@@ -29,3 +29,22 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Screenshots & generated diagrams
+scr_*.png
+uml_*.png
+uml_activity_en.png
+uml_activity_he.png
+
+# Submission documents
+gadash_report*.docx
+gadash_README.docx
+
+# Report / screenshot generation scripts
+fill_report.py
+generate_report.py
+take_screenshots.py
+
+# Claude AI config
+CLAUDE.md
+.claude/
