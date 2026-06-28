@@ -2,47 +2,78 @@
 title Gadash Management System — Use Case Diagram
 
 left to right direction
+skinparam backgroundColor #ffffff
 skinparam packageStyle rectangle
 skinparam usecase {
   BackgroundColor #e8f0fb
   BorderColor #3578c8
   ArrowColor #1a2f4e
+  FontColor #000000
 }
 skinparam actor {
   BackgroundColor #f5f7fa
   BorderColor #1a2f4e
+  FontColor #000000
 }
 
-actor "עובד שדה\n(Telegram)" as FieldWorker
-actor "מנהל\n(Web)" as Manager
-actor "Google Sheets" as GSheets
+actor "Field Worker\n(Telegram Bot)" as FieldWorker
+actor "Web Worker\n(Portal /worker)" as WebWorker
+actor "Manager\n(Web Interface)" as Manager
+actor "Google Sheets\n(External System)" as GSheets
 
 rectangle "Gadash Management System" {
-  usecase "הזנת עבודה חדשה" as UC1
-  usecase "צפייה ב-5 עבודות אחרונות" as UC2
-  usecase "צפייה בכל העבודות" as UC3
-  usecase "סינון לפי לקוח / תאריך / סוג" as UC4
-  usecase "הוספת עבודה דרך ה-Web" as UC5
-  usecase "עריכת עבודה קיימת" as UC6
-  usecase "מחיקת עבודה" as UC7
-  usecase "ייצוא ל-Excel" as UC8
-  usecase "ייבוא מ-Excel" as UC9
-  usecase "סנכרון עם Google Sheets" as UC10
+
+  usecase "Submit New Work Entry\n(12-step guided conversation)" as UC1
+  usecase "Undo Last Entry (/undo)" as UC2
+  usecase "View Last 5 Entries" as UC3
+  usecase "Search by Client Name" as UC4
+  usecase "Receive Auto Reports\n(08:00 daily / 18:00 reminder)" as UC5
+
+  usecase "Submit Entry via Web Portal" as UC6
+  usecase "View Personal History" as UC7
+
+  usecase "View All Entries\n(filter, search, pagination)" as UC8
+  usecase "Add / Edit / Delete Entry\n(Quick-Add & inline edit)" as UC9
+  usecase "Bulk Delete & Duplicate" as UC10
+  usecase "Export Excel / CSV" as UC11
+  usecase "Import Excel (with dedup)" as UC12
+  usecase "Monthly Report (3 charts)" as UC13
+  usecase "Field Hours Report" as UC14
+  usecase "Client Report" as UC15
+  usecase "Audit Log" as UC16
+  usecase "Manage Workers\n(add / delete / link Telegram)" as UC17
+  usecase "Change Password" as UC18
+
+  usecase "Sync with\nGoogle Sheets" as UC_SYNC
 }
 
 FieldWorker --> UC1
 FieldWorker --> UC2
-Manager --> UC3
-Manager --> UC4
-Manager --> UC5
-Manager --> UC6
-Manager --> UC7
+FieldWorker --> UC3
+FieldWorker --> UC4
+FieldWorker --> UC5
+
+WebWorker --> UC6
+WebWorker --> UC7
+
 Manager --> UC8
 Manager --> UC9
-UC1 ..> UC10 : <<include>>
-UC5 ..> UC10 : <<include>>
-UC6 ..> UC10 : <<include>>
-UC7 ..> UC10 : <<include>>
-UC10 --> GSheets
+Manager --> UC10
+Manager --> UC11
+Manager --> UC12
+Manager --> UC13
+Manager --> UC14
+Manager --> UC15
+Manager --> UC16
+Manager --> UC17
+Manager --> UC18
+
+UC1  ..> UC_SYNC : <<include>>
+UC6  ..> UC_SYNC : <<include>>
+UC9  ..> UC_SYNC : <<include>>
+UC10 ..> UC_SYNC : <<include>>
+UC12 ..> UC_SYNC : <<include>>
+
+UC_SYNC --> GSheets
 
 @enduml

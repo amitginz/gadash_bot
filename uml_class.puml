@@ -2,77 +2,172 @@
 title Gadash Management System — Class Diagram
 
 skinparam classAttributeIconSize 0
+skinparam backgroundColor #ffffff
 skinparam class {
   BackgroundColor #e8f0fb
   BorderColor #3578c8
   HeaderBackgroundColor #1a2f4e
   HeaderFontColor #ffffff
   ArrowColor #1a2f4e
+  FontColor #000000
+}
+skinparam note {
+  BackgroundColor #fef3c7
+  BorderColor #d97706
+  FontColor #000000
 }
 
-class FlaskApp {
-  +app: Flask
-  +COLUMNS: list
+class WorkEntry <<dataclass>> {
+  + client : str
+  + date : str
+  + task : str
+  + field_name : str = ""
+  + crop : str = ""
+  + amount : str = ""
+  + hours : str = ""
+  + tool : str = ""
+  + operator : str = ""
+  + notes : str = ""
+  + entered_by : str = ""
   --
-  +index(): Response
-  +add(): Response
-  +edit(row_id: int): Response
-  +delete(row_id: int): Response
-  +import_data(): Response
-  +export(): Response
+  + __post_init__() : void
+  + to_sheet_row() : list
+  + to_dict() : dict
+  + {static} from_dict(d: dict) : WorkEntry
+  + {static} from_form(form, entered_by: str) : WorkEntry
+  + {static} from_bot(user_data: dict, full_name: str) : WorkEntry
 }
 
-class GoogleSheetsDB {
-  -_gs_client: gspread.Client
+note right of WorkEntry
+  COLUMNS: 11 Hebrew column names
+  VALID_TASKS = {Plowing, Spraying,
+    Harvesting, Disking, Other}
+  row_id = 0-based index
+  sheet_row = row_id + 2
+end note
+
+class SheetsDB <<module>> {
+  - _CACHE_TTL : int = 300 sec
+  - _gs_lock : threading.Lock
+  - _cache_data : DataFrame
+  - _coords_cache : dict
   --
-  +_get_sheet(): Worksheet
-  +load_data_from_gsheet(): DataFrame
-  +append_row_to_gsheet(row: dict): void
-  +save_data_to_gsheet(df: DataFrame): void
+  + load_data_from_gsheet() : DataFrame
+  + append_row_to_gsheet(entry: WorkEntry) : void
+  + edit_row_in_gsheet(row_id: int, entry: WorkEntry) : void
+  + delete_row_in_gsheet(row_id: int) : void
+  + bulk_delete_rows_in_gsheet(row_ids: list) : void
+  + patch_cell_in_gsheet(row_id: int, field: str, value: str) : void
+  + save_data_to_gsheet(df: DataFrame) : void
+  + load_passwords_from_sheet() : dict
+  + save_passwords_to_sheet(web_pw: str, worker_pw: str) : void
+  + _load_field_coords() : dict
+  + _save_field_coord(name: str, lat: float, lng: float) : void
 }
 
-class TelegramBot {
-  +token: str
-  +MENU: int = 0
-  +CLIENT: int = 1
-  +DATE: int = 2
-  +TASK: int = 3
-  +FIELD: int = 4
-  +AMOUNT: int = 5
-  +TOOL: int = 6
-  +OPERATOR: int = 7
-  +NOTE: int = 8
-  +CONFIRM: int = 9
+class ServiceLayer <<module>> {
+  + create_entry(entry: WorkEntry, actor: str) : void
+}
+
+class AuditLog <<module>> {
+  - AUDIT_LOG_FILE : str = "audit.log"
+  - _audit_queue : deque
+  - _audit_lock : threading.Lock
   --
-  +start(update, context): int
-  +menu_choice(update, context): int
-  +client_step(update, context): int
-  +date_input(update, context): int
-  +task(update, context): int
-  +field(update, context): int
-  +amount(update, context): int
-  +tool(update, context): int
-  +operator_step(update, context): int
-  +note(update, context): int
-  +confirm(update, context): int
-  +cancel(update, context): int
+  + _log_audit(action: str, user: str, detail: str) : void
+  + _read_audit_log(limit: int) : list
+  + _flush_audit_to_sheets() : void
 }
 
-class WorkRecord {
-  +client_name: str
-  +date: str
-  +task_type: str
-  +field_name: str
-  +quantity: str
-  +equipment: str
-  +operator: str
-  +notes: str
-  +entered_by: str
+class WorkerManager <<module>> {
+  --
+  + _hash_pw(password: str) : str
+  + _load_workers() : list
+  + _verify_worker(name: str, password: str) : bool
+  + _add_worker(name: str, password: str) : bool
+  + _delete_worker(name: str) : bool
+  + _get_worker_by_telegram_id(tid: int) : dict
+  + _link_worker_telegram(name: str, tid: int) : bool
 }
 
-FlaskApp ..> GoogleSheetsDB : uses
-TelegramBot ..> GoogleSheetsDB : uses
-GoogleSheetsDB ..> WorkRecord : manages
-FlaskApp ..> WorkRecord : creates / updates
+note right of WorkerManager
+  Passwords: Werkzeug PBKDF2-SHA256
+  Backward-compat: legacy SHA-256 (64 hex)
+end note
+
+class SubscriberManager <<module>> {
+  - _subscribers_cache : set
+  - _subscribers_lock : threading.Lock
+  --
+  + _get_subscribers() : set
+  + _add_subscriber(chat_id: int) : void
+}
+
+class TelegramBot <<module>> {
+  + MENU=0, CLIENT=1, DATE=2, TASK=3
+  + FIELD=4, CROP=5, AMOUNT=6, HOURS=7
+  + TOOL=8, OPERATOR=9, NOTE=10, CONFIRM=11
+  + SEARCH=12, EDIT_SELECT=13
+  + REGISTER_NAME=14, REGISTER_PASSWORD=15
+  --
+  + start(update, context) : int
+  + menu_choice(update, context) : int
+  + confirm(update, context) : int
+  + bot_undo(update, context) : int
+  + bot_search_results(update, context) : int
+  + note_photo(update, context) : int
+  + _scheduled_reports(context) : void
+  + start_telegram_bot() : void
+}
+
+class FlaskApp <<module>> {
+  - PAGE_SIZE : int = 50
+  - _current_password : str
+  - _worker_password : str
+  --
+  + index() : Response
+  + login() : Response
+  + add() : Response
+  + edit(row_id: int) : Response
+  + delete(row_id: int) : Response
+  + bulk_delete() : Response
+  + duplicate(row_id: int) : Response
+  + summary() : Response
+  + export() : Response
+  + import_data() : Response
+  + field_report() : Response
+  + client_report() : Response
+  + audit() : Response
+  + workers() : Response
+  + api_entries() : Response
+  + api_entry_patch(entry_id: int) : Response
+  + webhook(token: str) : Response
+}
+
+note right of FlaskApp
+  @login_required  -> session["logged_in"]
+  @worker_required -> session["worker_logged_in"]
+  CSRF tokens + rate limiting (5/min)
+  Session timeout: 8 hours
+end note
+
+ServiceLayer ..> SheetsDB      : calls append_row
+ServiceLayer ..> AuditLog      : calls _log_audit
+ServiceLayer ..> WorkEntry     : uses
+
+FlaskApp ..> ServiceLayer      : uses
+FlaskApp ..> SheetsDB          : reads / writes
+FlaskApp ..> AuditLog          : reads log
+FlaskApp ..> WorkerManager     : manages workers
+FlaskApp ..> WorkEntry         : creates / validates
+
+TelegramBot ..> ServiceLayer   : uses
+TelegramBot ..> SheetsDB       : reads data
+TelegramBot ..> WorkEntry      : creates
+TelegramBot ..> SubscriberManager : manages subs
+TelegramBot ..> AuditLog       : logs actions
+TelegramBot ..> WorkerManager  : links telegram_id
+
+SheetsDB ..> WorkEntry         : serializes / deserializes
 
 @enduml

@@ -1,0 +1,56 @@
+@startuml
+title Gadash Management System — Architecture Diagram
+
+skinparam backgroundColor #ffffff
+skinparam rectangle {
+  FontColor #000000
+  BorderColor #3578c8
+}
+skinparam arrow {
+  Color #1a2f4e
+  FontColor #1a2f4e
+}
+skinparam note {
+  BackgroundColor #fef3c7
+  BorderColor #d97706
+  FontColor #000000
+}
+
+together {
+  rectangle "**Presentation Layer**" as P #e8f0fb {
+    rectangle "Web Browser\n──────────────\nHTML5 / Jinja2 Templates\nBootstrap 5.3 RTL\nJavaScript / Chart.js\nLeaflet.js (field map)" as WEB #dce8fb
+    rectangle "Telegram App\n──────────────\nConversationHandler\n16 conversation states\nKeyboard buttons" as BOT #dce8fb
+  }
+}
+
+rectangle "**Logic Layer**" as L #d4edda {
+  rectangle "Flask Application  (app.py)\n──────────────────────────────\n@login_required / @worker_required\nCSRF protection · Rate limiting (5/min)\nSession timeout (8h) · REST API" as FLASK #c3e6cb
+
+  rectangle "gadash/ Package\n──────────────────────────────\nmodels.py   — WorkEntry dataclass\nservice.py  — create_entry()\naudit.py    — dual audit log\nworkers.py  — PBKDF2 password hashing\nsubscribers.py — broadcast list\nbot.py      — Telegram bot logic" as PKG #c3e6cb
+}
+
+rectangle "**Data Layer**" as D #fff3cd {
+  rectangle "Google Sheets API  (gspread)\n──────────────────────────────\nSheet1      — work entries (11 columns)\nSettings    — passwords (key-value)\nWorkers     — worker registry\nFieldCoords — GPS coordinates\nAuditLog    — audit trail\nSubscribers — Telegram chat_ids" as GS #ffeeba
+}
+
+note right of L
+  In-memory cache (TTL 5 min)
+  threading.Lock — thread safety
+  Single gunicorn worker +
+  Telegram daemon thread
+end note
+
+note right of D
+  Single source of truth
+  Auto-backup via Google Drive
+  Accessible directly to manager
+  No database cost
+end note
+
+WEB  -down-> FLASK  : HTTP / JSON
+BOT  -down-> PKG    : async calls
+FLASK -down-> PKG   : uses
+PKG  -down-> GS     : gspread API (HTTPS)
+FLASK -down-> GS    : direct reads/writes
+
+@enduml

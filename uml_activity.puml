@@ -1,6 +1,7 @@
 @startuml
-title Gadash Bot — Activity Diagram (הזנת עבודה)
+title Gadash Bot — Activity Diagram (Submit Work Entry)
 
+skinparam backgroundColor #ffffff
 skinparam activity {
   BackgroundColor #e8f0fb
   BorderColor #3578c8
@@ -9,58 +10,75 @@ skinparam activity {
   EndColor #1a2f4e
   DiamondBackgroundColor #fef3c7
   DiamondBorderColor #d97706
+  FontColor #000000
 }
 
 start
-:משתמש שולח /start;
-:הבוט מציג הודעת ברוך הבא;
-:תפריט MENU;
+:User sends /start to bot;
+:Bot displays main MENU;
+:User selects "Submit New Work Entry";
 
-fork
-  -[#3578c8]-> הזן עבודה חדשה;
-  :הבוט מבקש שם לקוח;
-  :המשתמש מזין שם לקוח;
-  :הבוט מבקש תאריך\n(YYYY-MM-DD או "היום");
-  repeat
-    :המשתמש מזין תאריך;
-    if (תאריך תקין?) then (כן)
-    else (לא)
-      :הבוט מציג שגיאה ומבקש שוב;
-    endif
-  repeat while (תאריך תקין?) is (לא)
-  :הבוט מציג לוח מקשים — בחירת סוג עבודה\n(חריש / ריסוס / קציר / דיסוק / אחר);
-  :המשתמש בוחר סוג עבודה;
-  :הבוט מבקש שם חלקה;
-  :המשתמש מזין שם חלקה;
-  :הבוט מבקש כמות;
-  :המשתמש מזין כמות;
-  :הבוט מבקש כלי עבודה;
-  :המשתמש מזין כלי;
-  :הבוט מבקש שם מפעיל;
-  :המשתמש מזין שם מפעיל;
-  :הבוט מבקש הערות;
-  :המשתמש מזין הערות;
-  :הבוט מציג סיכום מלא לאישור;
-  if (המשתמש אישר?) then (כן)
-    :שמירה ב-Google Sheets\n(entered_by = שם טלגרם);
-    :הבוט מציג הודעת הצלחה;
-  else (לא / /cancel)
-    :הבוט מציג הודעת ביטול;
+:Bot requests client name;
+:User enters client name;
+
+repeat
+  :Bot requests date\n(YYYY-MM-DD or "today");
+  :User enters date;
+  if (Valid date?) then (yes)
+  else (no)
+    :Bot shows error, requests again;
   endif
+repeat while (Valid date?) is (no)
 
-fork again
-  -[#1e8c4e]-> 5 עבודות אחרונות;
-  :טעינת נתונים מ-Google Sheets;
-  :הצגת 5 שורות אחרונות;
+:Bot shows keyboard:\nPlowing / Spraying / Harvesting / Disking / Other;
+:User selects task type;
 
-fork again
-  -[#dc2626]-> סיים;
-  :הבוט מסיים את השיחה;
-  stop
+:Bot requests field name;
+:User enters field name;
 
-end fork
+:Bot requests crop type;
+if (User skips?) then (no)
+  :User enters crop;
+endif
 
-:חזרה לתפריט MENU;
+:Bot requests quantity;
+:User enters quantity;
 
+:Bot requests work hours;
+if (User skips?) then (no)
+  :User enters hours;
+endif
+
+:Bot requests equipment;
+:User enters equipment;
+
+:Bot requests operator name;
+:User enters operator;
+
+:Bot requests notes (optional — photo allowed);
+if (User skips?) then (no)
+  :User enters notes / attaches photo;
+endif
+
+:WorkEntry.__post_init__() — validate required fields;
+:Bot displays full summary for confirmation;
+
+if (User confirmed?) then (yes)
+  :create_entry()\nappend_row_to_gsheet() + _log_audit("add");
+  :Bot sends success message;
+else (no / /cancel)
+  :Bot sends cancellation message;
+endif
+
+:Return to MENU;
 stop
+
+note right
+  Other menu options:
+  • View Last 5 Entries
+  • Search by Client
+  • Undo Last Entry (/undo)
+  • Exit
+end note
+
 @enduml

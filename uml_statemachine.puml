@@ -1,64 +1,80 @@
 @startuml
-title Gadash Bot — State Machine Diagram (מצבי שיחה)
+title Gadash Bot — State Machine Diagram (Conversation States)
 
+skinparam backgroundColor #ffffff
 skinparam state {
   BackgroundColor #e8f0fb
   BorderColor #3578c8
   ArrowColor #1a2f4e
   StartColor #1a2f4e
   EndColor #1a2f4e
+  FontColor #000000
+}
+skinparam note {
+  BackgroundColor #fef3c7
+  BorderColor #d97706
+  FontColor #000000
 }
 
 [*] --> MENU : /start
 
-state MENU : תפריט ראשי
-state CLIENT : המתנה לשם לקוח
-state DATE : המתנה לתאריך
-state TASK : בחירת סוג עבודה
-state FIELD : המתנה לשם חלקה
-state AMOUNT : המתנה לכמות
-state TOOL : המתנה לכלי
-state OPERATOR : המתנה לשם מפעיל
-state NOTE : המתנה להערות
-state CONFIRM : אישור / ביטול
-state END : סיום שיחה
+state MENU        : Main Menu (0)
+state CLIENT      : Waiting for client name (1)
+state DATE        : Waiting for date (2)
+state TASK        : Select task type (3)
+state FIELD       : Waiting for field name (4)
+state CROP        : Waiting for crop — optional (5)
+state AMOUNT      : Waiting for quantity (6)
+state HOURS       : Waiting for hours — optional (7)
+state TOOL        : Waiting for equipment (8)
+state OPERATOR    : Waiting for operator name (9)
+state NOTE        : Waiting for notes / photo — optional (10)
+state CONFIRM     : Confirm summary (11)
+state SEARCH      : Search by client name (12)
+state EDIT_SELECT : Select record to view (13)
+state END         : End of conversation
 
-MENU --> CLIENT : "הזן עבודה חדשה" / "Yes, let's start"
-MENU --> MENU : "5 עבודות אחרונות" [מציג 5 רשומות]
-MENU --> END : "סיים" / "No, thanks"
+MENU --> CLIENT      : "Submit New Entry"
+MENU --> MENU        : "View Last 5" [displays & returns]
+MENU --> SEARCH      : "Search Client"
+MENU --> EDIT_SELECT : "Edit Last Entry"
+MENU --> END         : "Exit"
 
-CLIENT --> DATE : [קלט שם לקוח]
-DATE --> TASK : [תאריך תקין]
-DATE --> DATE : [תאריך שגוי]\nשגיאה + ניסיון חוזר
-TASK --> FIELD : [בחירת סוג עבודה]
-FIELD --> AMOUNT : [קלט שם חלקה]
-AMOUNT --> TOOL : [קלט כמות]
-TOOL --> OPERATOR : [קלט כלי]
-OPERATOR --> NOTE : [קלט שם מפעיל]
-NOTE --> CONFIRM : [קלט הערות]\nהצגת סיכום
+CLIENT   --> DATE
+DATE     --> TASK     : [valid date]
+DATE     --> DATE     : [invalid date] error + retry
+TASK     --> FIELD
+FIELD    --> CROP
+CROP     --> AMOUNT   : [entered / skipped]
+AMOUNT   --> HOURS
+HOURS    --> TOOL     : [entered / skipped]
+TOOL     --> OPERATOR
+OPERATOR --> NOTE
+NOTE     --> CONFIRM  : [entered / skipped]\ndisplay summary
 
-CONFIRM --> MENU : "כן"\nשמירה ב-Google Sheets\nentered_by = Telegram username
-CONFIRM --> MENU : "לא" / /cancel\nביטול
+CONFIRM --> MENU : "yes" -> create_entry() + _log_audit
+CONFIRM --> MENU : "no" / /cancel -> cancelled
 
-CLIENT --> END : /cancel
-DATE --> END : /cancel
-TASK --> END : /cancel
-FIELD --> END : /cancel
-AMOUNT --> END : /cancel
-TOOL --> END : /cancel
-OPERATOR --> END : /cancel
-NOTE --> END : /cancel
+SEARCH      --> MENU
+EDIT_SELECT --> MENU
 
 END --> [*]
 
-note right of DATE
-  ניתן לכתוב "היום"
-  לתאריך של היום
+note top of MENU
+  From ANY state:
+  /cancel -> END
+  /start  -> MENU
+  /undo   -> delete last entry & return to MENU
 end note
 
-note right of CONFIRM
-  מכל מצב: /cancel מעביר ל-END
-  /start מעביר ל-MENU
+note right of DATE
+  "today" accepted
+  as shortcut
+end note
+
+note bottom of CROP
+  Optional fields: CROP (5), HOURS (7), NOTE (10)
+  can be skipped with the "Skip" button
 end note
 
 @enduml
