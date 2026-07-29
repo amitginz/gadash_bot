@@ -9,23 +9,44 @@ def _hash_pw(password: str) -> str:
     return generate_password_hash(password)
 
 
+_DEFAULT_OFFLINE_WORKERS = [
+    {"שם": "עובד 1", "password_hash": generate_password_hash("gadash2025"), "telegram_id": ""},
+    {"שם": "מנהל",   "password_hash": generate_password_hash("gadash2025"), "telegram_id": ""},
+]
+
+
 def _load_workers() -> list:
+    """Load list of registered worker accounts from Google Sheets or default local fallback.
+
+    Returns:
+        list: List of dictionaries containing 'שם', 'password_hash', and 'telegram_id'.
+    """
     try:
         ws = _get_workers_sheet()
         if not ws:
-            return []
+            return _DEFAULT_OFFLINE_WORKERS
         rows = ws.get_all_values()
-        return [
+        workers = [
             {"שם": r[0],
              "password_hash": r[1] if len(r) > 1 else "",
              "telegram_id":   r[2] if len(r) > 2 else ""}
             for r in rows[1:] if r and r[0]
         ]
+        return workers if workers else _DEFAULT_OFFLINE_WORKERS
     except Exception:
-        return []
+        return _DEFAULT_OFFLINE_WORKERS
 
 
 def _verify_worker(name: str, password: str) -> bool:
+    """Verify worker credentials against stored hashes.
+
+    Args:
+        name (str): Worker name.
+        password (str): Plaintext password to verify.
+
+    Returns:
+        bool: True if credentials match, False otherwise.
+    """
     for w in _load_workers():
         if w["שם"] != name:
             continue

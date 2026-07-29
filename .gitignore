@@ -48,3 +48,7 @@ take_screenshots.py
 # Claude AI config
 CLAUDE.md
 .claude/
+
+# Debug files
+audit.log
+data/offline_queue.json

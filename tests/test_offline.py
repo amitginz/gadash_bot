@@ -43,3 +43,22 @@ class TestOfflineQueueAndStaleCache:
         df = load_data_from_gsheet()
         assert not df.empty
         assert "לקוח אופליין" in df["שם לקוח"].values
+
+    def test_save_data_to_gsheet_offline_fallback(self):
+        import gadash.sheets as sheets_mod
+        from gadash.sheets import save_data_to_gsheet
+        sheets_mod._cache_data = None
+        sheets_mod._offline_queue = []
+
+        entry = WorkEntry(client="לקוח ייבוא", date="2025-06-02", task="קציר")
+        df_import = pd.DataFrame([entry.to_dict()])
+
+        # Call save_data_to_gsheet without credentials -> should save to local cache/queue without throwing
+        save_data_to_gsheet(df_import)
+
+        status = get_offline_status()
+        assert status["online"] is False
+        df_cache = load_data_from_gsheet()
+        assert not df_cache.empty
+        assert "לקוח ייבוא" in df_cache["שם לקוח"].values
+

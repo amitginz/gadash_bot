@@ -173,7 +173,19 @@ def _load_field_coords() -> dict:
 
 
 def _save_field_coord(name: str, lat: float, lng: float):
+    """Save field pin coordinates to Google Sheets or update local memory cache if offline.
+
+    Args:
+        name (str): Field or point pin name.
+        lat (float): Latitude coordinate.
+        lng (float): Longitude coordinate.
+    """
     global _coords_cache, _coords_cache_time
+    with _gs_lock:
+        if _coords_cache is None:
+            _coords_cache = {}
+        _coords_cache[name] = {"lat": lat, "lng": lng}
+        _coords_cache_time = time.time()
     try:
         ws = _get_fieldcoords_sheet()
         if not ws:
@@ -185,13 +197,8 @@ def _save_field_coord(name: str, lat: float, lng: float):
                 break
         else:
             ws.append_row([name, lat, lng])
-        # Update in-memory cache immediately so next read is instant
-        with _gs_lock:
-            if _coords_cache is not None:
-                _coords_cache[name] = {"lat": lat, "lng": lng}
-                _coords_cache_time = time.time()
     except Exception as e:
-        print(f"[FieldCoords] save error: {e}")
+        print(f"[FieldCoords] save error: {e}. Cached pin locally.")
 
 
 def load_passwords_from_sheet() -> dict:
@@ -323,21 +330,56 @@ def append_row_to_gsheet(entry: WorkEntry):
 
 
 def edit_row_in_gsheet(row_id: int, entry: WorkEntry):
-    sheet = _get_sheet()
-    sheet_row = row_id + 2
-    end_col = chr(64 + _N_COLS)
-    sheet.update([entry.to_sheet_row()], f"A{sheet_row}:{end_col}{sheet_row}",
-                 value_input_option="USER_ENTERED")
-    _invalidate_cache()
+    """Edit a work entry by index, updating Google Sheets or local cache/queue if offline.
+
+    Args:
+        row_id (int): Zero-based row index.
+        entry (WorkEntry): Updated WorkEntry instance.
+    """
+    global _cache_data, _is_offline
+    try:
+        sheet = _get_sheet()
+        sheet_row = row_id + 2
+        end_col = chr(64 + _N_COLS)
+        sheet.update([entry.to_sheet_row()], f"A{sheet_row}:{end_col}{sheet_row}",
+                     value_input_option="USER_ENTERED")
+        _invalidate_cache()
+    except Exception as e:
+        _is_offline = True
+        print(f"[GSheet] edit error: {e}. Updating local cache.")
+        with _gs_lock:
+            if _cache_data is not None and row_id < len(_cache_data):
+                for col, val in entry.to_dict().items():
+                    _cache_data.at[row_id, col] = val
+                save_data_to_gsheet(_cache_data)
 
 
 def delete_row_in_gsheet(row_id: int):
-    sheet = _get_sheet()
-    sheet.delete_rows(row_id + 2)
-    _invalidate_cache()
+    """Delete a work entry by index, removing from Google Sheets or local cache/queue if offline.
+
+    Args:
+        row_id (int): Zero-based row index to delete.
+    """
+    global _cache_data, _is_offline
+    try:
+        sheet = _get_sheet()
+        sheet.delete_rows(row_id + 2)
+        _invalidate_cache()
+    except Exception as e:
+        _is_offline = True
+        print(f"[GSheet] delete error: {e}. Removing from local cache.")
+        with _gs_lock:
+            if _cache_data is not None and row_id < len(_cache_data):
+                _cache_data = _cache_data.drop(index=row_id).reset_index(drop=True)
+                save_data_to_gsheet(_cache_data)
 
 
 def bulk_delete_rows_in_gsheet(row_ids: list):
+    """Bulk delete work entries by index list, updating Google Sheets or local cache if offline.
+
+    Args:
+        row_ids (list): List of zero-based row indices to delete.
+    """
     df = load_data_from_gsheet()
     valid_ids = [i for i in row_ids if i < len(df)]
     if not valid_ids:
@@ -347,17 +389,60 @@ def bulk_delete_rows_in_gsheet(row_ids: list):
 
 
 def patch_cell_in_gsheet(row_id: int, field: str, value: str):
-    sheet = _get_sheet()
-    col_idx = COLUMNS.index(field) + 1
-    sheet.update_cell(row_id + 2, col_idx, value)
-    _invalidate_cache()
+    """Patch a single cell value, updating Google Sheets or local cache if offline.
+
+    Args:
+        row_id (int): Zero-based row index.
+        field (str): Column header name.
+        value (str): New cell value.
+    """
+    global _cache_data, _is_offline
+    try:
+        sheet = _get_sheet()
+        col_idx = COLUMNS.index(field) + 1
+        sheet.update_cell(row_id + 2, col_idx, value)
+        _invalidate_cache()
+    except Exception as e:
+        _is_offline = True
+        print(f"[GSheet] patch error: {e}. Updating local cell cache.")
+        with _gs_lock:
+            if _cache_data is not None and row_id < len(_cache_data) and field in _cache_data.columns:
+                _cache_data.at[row_id, field] = value
+                save_data_to_gsheet(_cache_data)
 
 
 def save_data_to_gsheet(df: pd.DataFrame):
-    sheet = _get_sheet()
-    sheet.clear()
-    sheet.append_row(COLUMNS)
-    if not df.empty:
-        rows = df[COLUMNS].fillna("").astype(str).values.tolist()
-        sheet.append_rows(rows, value_input_option="USER_ENTERED")
-    _invalidate_cache()
+    """Overwrite Google Sheets data with DataFrame, or fallback to local cache/queue if offline.
+
+    Args:
+        df (pd.DataFrame): DataFrame of work entries to save.
+    """
+    global _cache_data, _cache_time, _is_offline
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    df_clean = df[COLUMNS]
+
+    try:
+        sheet = _get_sheet()
+        sheet.clear()
+        sheet.append_row(COLUMNS)
+        if not df_clean.empty:
+            rows = df_clean[COLUMNS].fillna("").astype(str).values.tolist()
+            sheet.append_rows(rows, value_input_option="USER_ENTERED")
+        with _gs_lock:
+            _cache_data = df_clean.copy()
+            _cache_time = time.time()
+            _is_offline = False
+    except Exception as e:
+        _is_offline = True
+        print(f"[GSheet] save error: {e}. Saving imported data to offline local cache.")
+        with _gs_lock:
+            _cache_data = df_clean.copy()
+            _cache_time = time.time()
+        _load_offline_queue()
+        for row_dict in df_clean.to_dict(orient="records"):
+            if row_dict not in _offline_queue:
+                _offline_queue.append(row_dict)
+        _save_offline_queue()
+

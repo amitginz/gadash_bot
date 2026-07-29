@@ -495,10 +495,25 @@ def import_data():
                 if skipped:
                     flash(f"⚠️ {skipped} שורות כפולות דולגו", "warning")
                 if not new_df.empty:
+                    # Auto-assign deterministic UIDs for any imported rows missing a UID
+                    new_rows_list = []
+                    for _, r in new_df.iterrows():
+                        r_dict = r.to_dict()
+                        if not r_dict.get("מזהה"):
+                            entry = WorkEntry.from_dict(r_dict)
+                            r_dict["מזהה"] = entry.uid
+                        new_rows_list.append(r_dict)
+                    new_df = pd.DataFrame(new_rows_list)
+
                     combined = pd.concat([existing_df, new_df], ignore_index=True) if not existing_df.empty else new_df
                     save_data_to_gsheet(combined)
                     _log_audit("import", "Web", f"{len(new_df)} rows imported, {skipped} skipped")
-                    flash(f"{len(new_df)} שורות יובאו בהצלחה ✅", "success")
+                    
+                    status = get_offline_status()
+                    if not status.get("online"):
+                        flash(f"{len(new_df)} שורות יובאו בהצלחה (נשמרו במצב לא-מקוון לסנכרון) ⚠️", "warning")
+                    else:
+                        flash(f"{len(new_df)} שורות יובאו בהצלחה ✅", "success")
                     return redirect(url_for("index"))
                 else:
                     flash("כל השורות בקובץ כבר קיימות ⚠️", "warning")
