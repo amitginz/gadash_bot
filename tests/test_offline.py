@@ -62,3 +62,17 @@ class TestOfflineQueueAndStaleCache:
         assert not df_cache.empty
         assert "לקוח ייבוא" in df_cache["שם לקוח"].values
 
+    def test_nan_sanitized_in_loaded_data(self):
+        import gadash.sheets as sheets_mod
+        entry_dict = WorkEntry(client="לקוח בדיקה", date="2025-06-03", task="חריש").to_dict()
+        entry_dict["הערות"] = "nan"
+        entry_dict["כלי"] = "None"
+        df_nan = pd.DataFrame([entry_dict])[COLUMNS]
+        sheets_mod._cache_data = df_nan
+        sheets_mod._cache_time = time.time()
+
+        df_loaded = load_data_from_gsheet()
+        assert df_loaded.iloc[0]["הערות"] == ""
+        assert df_loaded.iloc[0]["כלי"] == ""
+
+

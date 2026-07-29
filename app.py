@@ -467,9 +467,15 @@ def print_report():
 @app.route("/import", methods=["GET", "POST"])
 @login_required
 def import_data():
+    """Import work records from uploaded Excel (.xlsx) or CSV (.csv) file.
+
+    Returns:
+        Response: HTML template rendering or redirect to index upon success.
+    """
     if request.method == "POST":
         file = request.files.get("file")
-        if file and file.filename.endswith(".xlsx"):
+        fname = file.filename.lower() if file else ""
+        if file and (fname.endswith(".xlsx") or fname.endswith(".csv")):
             file.seek(0, 2)
             file_size = file.tell()
             file.seek(0)
@@ -477,7 +483,20 @@ def import_data():
                 flash(f"הקובץ גדול מדי — מקסימום 5 MB ❌", "danger")
                 return render_template("import.html")
             try:
-                new_df = pd.read_excel(file)
+                if fname.endswith(".csv"):
+                    try:
+                        new_df = pd.read_csv(file, encoding="utf-8-sig", dtype=str)
+                    except Exception:
+                        file.seek(0)
+                        new_df = pd.read_csv(file, encoding="latin-1", dtype=str)
+                else:
+                    new_df = pd.read_excel(file, dtype=str)
+
+                # Clean NaN representations so empty fields are strictly empty strings
+                new_df = new_df.fillna("").astype(str)
+                for col in new_df.columns:
+                    new_df[col] = new_df[col].replace(["nan", "NaN", "None", "<NA>"], "")
+
                 existing_df = load_data_from_gsheet()
                 key_cols = ["שם לקוח", "תאריך", "עבודה", "שם חלקה"]
                 skipped = 0
@@ -520,7 +539,7 @@ def import_data():
             except Exception as e:
                 flash(f"שגיאה בייבוא: {e} ❌", "danger")
         else:
-            flash("יש לבחור קובץ Excel תקני (.xlsx) ❌", "danger")
+            flash("יש לבחור קובץ Excel (.xlsx) או CSV (.csv) תקני ❌", "danger")
     return render_template("import.html")
 
 

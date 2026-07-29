@@ -222,6 +222,23 @@ def save_passwords_to_sheet(web_password: str, worker_password: str):
         pass
 
 
+def _sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Sanitize DataFrame to replace nan/NaN/None values with empty strings.
+
+    Args:
+        df (pd.DataFrame): DataFrame to sanitize.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUMNS) if df is None else df
+    df_clean = df.fillna("").astype(str)
+    for col in df_clean.columns:
+        df_clean[col] = df_clean[col].replace(["nan", "NaN", "None", "<NA>"], "")
+    return df_clean
+
+
 def load_data_from_gsheet() -> pd.DataFrame:
     """Fetch work data from Google Sheets, returning stale cached data if offline.
 
@@ -235,7 +252,7 @@ def load_data_from_gsheet() -> pd.DataFrame:
     global _cache_data, _cache_time, _is_offline
     with _gs_lock:
         if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
-            return _cache_data.copy()
+            return _sanitize_df(_cache_data).copy()
     try:
         sheet = _get_sheet()
         all_values = sheet.get_all_values()
@@ -249,6 +266,7 @@ def load_data_from_gsheet() -> pd.DataFrame:
                 if col not in df.columns:
                     df[col] = ""
             df = df[COLUMNS]
+        df = _sanitize_df(df)
         with _gs_lock:
             _cache_data = df
             _cache_time = time.time()
@@ -259,7 +277,7 @@ def load_data_from_gsheet() -> pd.DataFrame:
         print(f"[GSheet] load error: {e}")
         with _gs_lock:
             if _cache_data is not None:
-                return _cache_data.copy()
+                return _sanitize_df(_cache_data).copy()
         return pd.DataFrame(columns=COLUMNS)
 
 

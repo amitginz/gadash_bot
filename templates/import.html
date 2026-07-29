@@ -11,7 +11,7 @@
 {% block content %}
 <div class="container">
   <div class="form-card">
-    <h5 class="fw-bold mb-4">📥 ייבוא עבודות מקובץ Excel</h5>
+    <h5 class="fw-bold mb-4">📥 ייבוא עבודות מקובץ Excel / CSV</h5>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
@@ -22,8 +22,8 @@
     <form method="post" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
       <div class="mb-3">
-        <label for="file" class="form-label fw-semibold">בחר קובץ Excel (.xlsx)</label>
-        <input type="file" class="form-control" id="file" name="file" accept=".xlsx" required>
+        <label for="file" class="form-label fw-semibold">בחר קובץ Excel (.xlsx) או CSV (.csv)</label>
+        <input type="file" class="form-control" id="file" name="file" accept=".xlsx,.csv" required>
       </div>
       <div class="d-flex justify-content-between">
         <a href="/" class="btn btn-outline-secondary">← חזור</a>
