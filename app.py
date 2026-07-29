@@ -31,12 +31,13 @@ from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.service import create_entry
 from gadash.sheets import (
     _invalidate_cache, _load_field_coords, _save_field_coord,
-    append_row_to_gsheet, bulk_delete_rows_in_gsheet,
-    delete_row_in_gsheet, edit_row_in_gsheet,
+    add_offline_entry, append_row_to_gsheet, bulk_delete_rows_in_gsheet,
+    delete_row_in_gsheet, edit_row_in_gsheet, get_offline_status,
     load_data_from_gsheet, load_passwords_from_sheet,
     patch_cell_in_gsheet, save_data_to_gsheet,
     save_passwords_to_sheet,
 )
+from gadash.sync import sync_offline_buffer
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
     _verify_worker,
@@ -540,6 +541,33 @@ def export_csv():
 
 
 # ── REST API ───────────────────────────────────────────────────────────────────
+
+@app.route("/api/status")
+def api_status():
+    """Return JSON status of online connectivity and pending offline queue count.
+
+    Returns:
+        Response: JSON payload containing:
+            - 'online' (bool): True if Google Sheets is connected, False if offline.
+            - 'pending_count' (int): Number of offline changes waiting to be synced.
+            - 'last_cache_time' (float): Unix timestamp of last cache refresh.
+    """
+    status = get_offline_status()
+    return jsonify(status)
+
+
+@app.route("/api/sync", methods=["POST"])
+@login_required
+def api_sync():
+    """Trigger manual or auto-reconnection synchronization of offline entries to Google Sheets.
+
+    Returns:
+        Response: JSON object containing 'synced_count', 'remaining_count', and 'status'.
+    """
+    res = sync_offline_buffer()
+    status_code = 200 if res.get("status") == "success" else 500
+    return jsonify(res), status_code
+
 
 @app.route("/api/docs")
 @login_required
