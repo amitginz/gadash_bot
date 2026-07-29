@@ -18,6 +18,10 @@ _CACHE_TTL  = 300
 _coords_cache      = None
 _coords_cache_time = 0.0
 
+_is_offline = False
+_offline_queue = []
+_OFFLINE_QUEUE_PATH = os.path.join("data", "offline_queue.json")
+
 _GS_SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -212,7 +216,16 @@ def save_passwords_to_sheet(web_password: str, worker_password: str):
 
 
 def load_data_from_gsheet() -> pd.DataFrame:
-    global _cache_data, _cache_time
+    """Fetch work data from Google Sheets, returning stale cached data if offline.
+
+    Implements a stale-while-revalidate caching policy: if fetching fresh data fails
+    or Google credentials are absent, the last-known cached DataFrame is preserved
+    and served indefinitely rather than returning an empty response.
+
+    Returns:
+        pd.DataFrame: DataFrame containing all work entries.
+    """
+    global _cache_data, _cache_time, _is_offline
     with _gs_lock:
         if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
             return _cache_data.copy()
@@ -232,10 +245,75 @@ def load_data_from_gsheet() -> pd.DataFrame:
         with _gs_lock:
             _cache_data = df
             _cache_time = time.time()
+            _is_offline = False
         return df.copy()
     except Exception as e:
+        _is_offline = True
         print(f"[GSheet] load error: {e}")
+        with _gs_lock:
+            if _cache_data is not None:
+                return _cache_data.copy()
         return pd.DataFrame(columns=COLUMNS)
+
+
+def _load_offline_queue():
+    """Load pending offline records from the local data/offline_queue.json storage file."""
+    global _offline_queue
+    if os.path.exists(_OFFLINE_QUEUE_PATH):
+        try:
+            with open(_OFFLINE_QUEUE_PATH, "r", encoding="utf-8") as f:
+                _offline_queue = json.load(f)
+        except Exception:
+            _offline_queue = []
+
+
+def _save_offline_queue():
+    """Persist pending offline records to local data/offline_queue.json file."""
+    os.makedirs("data", exist_ok=True)
+    try:
+        with open(_OFFLINE_QUEUE_PATH, "w", encoding="utf-8") as f:
+            json.dump(_offline_queue, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[OfflineQueue] save error: {e}")
+
+
+def get_offline_status() -> dict:
+    """Return dictionary indicating online connectivity status and pending offline queue count.
+
+    Returns:
+        dict: Status mapping containing 'online' (bool), 'pending_count' (int), and 'last_cache_time' (float).
+    """
+    _load_offline_queue()
+    return {
+        "online": not _is_offline,
+        "pending_count": len(_offline_queue),
+        "last_cache_time": _cache_time,
+    }
+
+
+def add_offline_entry(row_dict: dict):
+    """Queue a work entry locally when offline and update the in-memory cached DataFrame.
+
+    Args:
+        row_dict (dict): Work entry dictionary mapping Hebrew COLUMNS headers.
+    """
+    global _cache_data, _offline_queue, _is_offline
+    _is_offline = True
+    _load_offline_queue()
+    _offline_queue.append(row_dict)
+    _save_offline_queue()
+
+    with _gs_lock:
+        new_row_df = pd.DataFrame([row_dict])
+        for col in COLUMNS:
+            if col not in new_row_df.columns:
+                new_row_df[col] = ""
+        new_row_df = new_row_df[COLUMNS]
+        if _cache_data is not None:
+            _cache_data = pd.concat([_cache_data, new_row_df], ignore_index=True)
+        else:
+            _cache_data = new_row_df.copy()
+
 
 
 def append_row_to_gsheet(entry: WorkEntry):
