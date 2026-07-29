@@ -13,6 +13,12 @@ _N_COLS = len(COLUMNS)  # 12 → column L
 
 @dataclass
 class WorkEntry:
+    """Dataclass representing a validated agricultural work record.
+
+    Includes deterministic UID generation (MD5 hash of entry content) to support
+    deduplication during offline sync and multi-device operations.
+    """
+
     client:     str
     date:       str
     task:       str
@@ -27,6 +33,12 @@ class WorkEntry:
     uid:        str = ""
 
     def __post_init__(self):
+        """Validate required fields and compute deterministic UID if not present.
+
+        Raises:
+            ValueError: If client is empty, date is not in YYYY-MM-DD format,
+                        date is invalid, or task is not in VALID_TASKS.
+        """
         self.client = self.client.strip()
         self.date   = self.date.strip()
         self.task   = self.task.strip()
@@ -48,6 +60,11 @@ class WorkEntry:
             self.uid = self.uid.strip()
 
     def to_sheet_row(self) -> list:
+        """Convert entry into an ordered list matching COLUMNS for Google Sheets export.
+
+        Returns:
+            list: List of string values corresponding to COLUMNS headers.
+        """
         return [
             self.client, self.date, self.task, self.field_name,
             self.crop, self.amount, self.hours,
@@ -56,10 +73,23 @@ class WorkEntry:
         ]
 
     def to_dict(self) -> dict:
+        """Convert entry into a dictionary keyed by Hebrew COLUMNS headers.
+
+        Returns:
+            dict: Mapping of COLUMNS header names to entry field values.
+        """
         return dict(zip(COLUMNS, self.to_sheet_row()))
 
     @classmethod
     def from_dict(cls, d: dict) -> "WorkEntry":
+        """Instantiate a WorkEntry from a dictionary keyed by Hebrew COLUMNS.
+
+        Args:
+            d (dict): Dictionary mapping column names to entry values.
+
+        Returns:
+            WorkEntry: Validated WorkEntry instance.
+        """
         return cls(
             client=str(d.get("שם לקוח", "")),
             date=str(d.get("תאריך", "")),
@@ -77,6 +107,15 @@ class WorkEntry:
 
     @classmethod
     def from_form(cls, form, entered_by: str = "Web") -> "WorkEntry":
+        """Instantiate a WorkEntry from a Flask request form dictionary.
+
+        Args:
+            form (dict): Form request data mapping Hebrew column keys.
+            entered_by (str): Name or role of the user submitting the form.
+
+        Returns:
+            WorkEntry: Validated WorkEntry instance.
+        """
         return cls(
             client=form.get("שם לקוח", ""),
             date=form.get("תאריך", ""),
@@ -94,6 +133,15 @@ class WorkEntry:
 
     @classmethod
     def from_bot(cls, user_data: dict, full_name: str) -> "WorkEntry":
+        """Instantiate a WorkEntry from Telegram bot conversation user_data.
+
+        Args:
+            user_data (dict): State dictionary collected during Telegram bot conversation.
+            full_name (str): Full name of the Telegram user submitting the entry.
+
+        Returns:
+            WorkEntry: Validated WorkEntry instance.
+        """
         return cls(
             client=user_data.get("שם לקוח", ""),
             date=user_data.get("תאריך", ""),
