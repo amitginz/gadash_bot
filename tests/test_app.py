@@ -93,6 +93,19 @@ class TestWorkEntry:
         assert e.task == "אחר"
         assert e.entered_by == "Web"
 
+    def test_uid_generated_automatically(self):
+        e = WorkEntry(client="לקוח ג", date="2025-05-01", task="חריש")
+        assert len(e.uid) == 12
+
+    def test_uid_deterministic(self):
+        e1 = WorkEntry(client="לקוח ג", date="2025-05-01", task="חריש", field_name="חלקה 1")
+        e2 = WorkEntry(client="לקוח ג", date="2025-05-01", task="חריש", field_name="חלקה 1")
+        assert e1.uid == e2.uid
+
+    def test_uid_custom_preserved(self):
+        e = WorkEntry(client="לקוח ג", date="2025-05-01", task="חריש", uid="custom123456")
+        assert e.uid == "custom123456"
+
 
 # ── Flask routes ───────────────────────────────────────────────────────────────
 

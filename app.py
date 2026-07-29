@@ -337,7 +337,7 @@ def add():
             flash(f"שגיאת אימות: {e} ❌", "danger")
         except Exception as e:
             flash(f"שגיאה בשמירה: {e} ❌", "danger")
-    prefill = {col: request.args.get(col, "") for col in COLUMNS if col != "מזין"}
+    prefill = {col: request.args.get(col, "") for col in COLUMNS if col not in ("מזין", "מזהה")}
     if not prefill.get("תאריך"):
         prefill["תאריך"] = today
     lists = {}
@@ -561,7 +561,7 @@ def api_patch_entry(row_id):
     data  = request.get_json(force=True, silent=True) or {}
     field = data.get("field", "")
     value = str(data.get("value", ""))
-    editable = [c for c in COLUMNS if c != "מזין"]
+    editable = [c for c in COLUMNS if c not in ("מזין", "מזהה")]
     if field not in editable:
         return jsonify({"error": f"שדה לא תקין: {field}"}), 400
     df = load_data_from_gsheet()
@@ -1077,6 +1077,8 @@ def api_dashboard():
             "updated_at": datetime.now().strftime("%H:%M:%S"),
         }
         if df.empty:
+            _dashboard_cache = {"_key": cache_key, "data": empty_resp}
+            _dashboard_cache_time = time.time()
             return jsonify(empty_resp)
 
         now          = datetime.now()

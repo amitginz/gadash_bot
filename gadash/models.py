@@ -1,13 +1,14 @@
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime as _dt
 
 COLUMNS = [
     "שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול",
-    "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין",
+    "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין", "מזהה",
 ]
 VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
-_N_COLS = len(COLUMNS)  # 11 → column K
+_N_COLS = len(COLUMNS)  # 12 → column L
 
 
 @dataclass
@@ -23,6 +24,7 @@ class WorkEntry:
     operator:   str = ""
     notes:      str = ""
     entered_by: str = ""
+    uid:        str = ""
 
     def __post_init__(self):
         self.client = self.client.strip()
@@ -39,11 +41,18 @@ class WorkEntry:
         if self.task not in VALID_TASKS:
             raise ValueError(f"סוג עבודה לא תקין: '{self.task}'")
 
+        if not self.uid or not self.uid.strip():
+            raw = f"{self.client}|{self.date}|{self.task}|{self.field_name}|{self.amount}|{self.operator}"
+            self.uid = hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
+        else:
+            self.uid = self.uid.strip()
+
     def to_sheet_row(self) -> list:
         return [
             self.client, self.date, self.task, self.field_name,
             self.crop, self.amount, self.hours,
             self.tool, self.operator, self.notes, self.entered_by,
+            self.uid,
         ]
 
     def to_dict(self) -> dict:
@@ -63,6 +72,7 @@ class WorkEntry:
             operator=str(d.get("מפעיל", "")),
             notes=str(d.get("הערות", "")),
             entered_by=str(d.get("מזין", "")),
+            uid=str(d.get("מזהה", "")),
         )
 
     @classmethod
@@ -79,6 +89,7 @@ class WorkEntry:
             operator=form.get("מפעיל", ""),
             notes=form.get("הערות", ""),
             entered_by=entered_by,
+            uid=form.get("מזהה", ""),
         )
 
     @classmethod
@@ -95,4 +106,5 @@ class WorkEntry:
             operator=user_data.get("מפעיל", ""),
             notes=user_data.get("הערות", ""),
             entered_by=full_name,
+            uid=user_data.get("מזהה", ""),
         )
