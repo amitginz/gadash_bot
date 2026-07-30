@@ -146,6 +146,28 @@ window.addEventListener('pageshow', e => {
 // ── Offline resilience & auto-sync JS engine ──
 let isAppOnline = true;
 let pendingOfflineCount = 0;
+let isInternalNavigation = false;
+
+// Track internal site navigation to prevent beforeunload prompts when moving between pages
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a');
+  if (a && a.href) {
+    try {
+      const linkUrl = new URL(a.href, window.location.href);
+      if (linkUrl.origin === window.location.origin && !a.target && a.getAttribute('href') !== '#') {
+        isInternalNavigation = true;
+      }
+    } catch (err) {}
+  }
+});
+
+document.addEventListener('submit', () => {
+  isInternalNavigation = true;
+});
+
+window.addEventListener('pageshow', () => {
+  isInternalNavigation = false;
+});
 
 function showToast(msg, bgClass = 'bg-success') {
   const toastEl = document.getElementById('statusToast');
@@ -214,10 +236,13 @@ function triggerAutoSync() {
 setInterval(checkOfflineStatus, 15000);
 checkOfflineStatus();
 
-// Warn user before closing tab if there are unsaved pending offline records
+// Warn user ONLY when closing the tab or leaving the domain
 window.addEventListener('beforeunload', (e) => {
+  if (isInternalNavigation) {
+    return; // Internal page navigation on the same domain - no warning needed
+  }
   if (pendingOfflineCount > 0) {
-    const warningMsg = `ישנן ${pendingOfflineCount} רשומות שלא סונכרנו. סגירת הכרטיסייה תמנע את סנכרונן ל-Google Sheets!`;
+    const warningMsg = `ישנן ${pendingOfflineCount} רשומות שלא סונכרנו. סגירת הכרטיסייה עלולה למנוע את סנכרונן ל-Google Sheets!`;
     e.preventDefault();
     e.returnValue = warningMsg;
     return warningMsg;

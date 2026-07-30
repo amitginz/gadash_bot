@@ -18,6 +18,15 @@ CSRF_HEADER = {"X-CSRFToken": "test-csrf-token"}
 
 class TestApiOfflineEndpoints:
 
+    def setup_method(self):
+        import os
+        sheets_mod._offline_queue = []
+        if os.path.exists(sheets_mod._OFFLINE_QUEUE_PATH):
+            try:
+                os.remove(sheets_mod._OFFLINE_QUEUE_PATH)
+            except Exception:
+                pass
+
     def test_api_status_endpoint_returns_json(self):
         with app.test_client() as client:
             res = client.get("/api/status")
