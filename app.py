@@ -10,6 +10,8 @@ from datetime import date, datetime, timedelta
 from functools import wraps
 from io import BytesIO
 from urllib.parse import urlencode
+from geofence import get_fields_data, match_coordinate_to_field
+
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -1097,6 +1099,15 @@ def api_fields_coords():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# geotagging
+
+@app.route("/map_poc")
+def map_poc():
+    dummy_job = {"lat": 32.425, "lon": 35.495}
+    matched_field = match_coordinate_to_field(dummy_job["lat"], dummy_job["lon"])
+    fields = get_fields_data()
+    return render_template("map.html", fields=fields, dummy_job=dummy_job, matched_field=matched_field)
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
