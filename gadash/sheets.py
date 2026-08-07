@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 
 from gadash.models import COLUMNS, _N_COLS, WorkEntry
+
+_logger = logging.getLogger(__name__)
 
 _gs_client  = None
 _gs_lock    = threading.Lock()
@@ -198,7 +201,7 @@ def _save_field_coord(name: str, lat: float, lng: float):
         else:
             ws.append_row([name, lat, lng])
     except Exception as e:
-        print(f"[FieldCoords] save error: {e}. Cached pin locally.")
+        _logger.error("[FieldCoords] save error: %s", e)
 
 
 def load_passwords_from_sheet() -> dict:
@@ -239,19 +242,22 @@ def _sanitize_df(df: pd.DataFrame) -> pd.DataFrame:
     return df_clean
 
 
-def load_data_from_gsheet() -> pd.DataFrame:
+def load_data_from_gsheet(force_refresh: bool = False) -> pd.DataFrame:
     """Fetch work data from Google Sheets, returning stale cached data if offline.
 
     Implements a stale-while-revalidate caching policy: if fetching fresh data fails
     or Google credentials are absent, the last-known cached DataFrame is preserved
     and served indefinitely rather than returning an empty response.
 
+    Args:
+        force_refresh (bool): If True, bypass cache and attempt fresh load from Google Sheets.
+
     Returns:
         pd.DataFrame: DataFrame containing all work entries.
     """
     global _cache_data, _cache_time, _is_offline
     with _gs_lock:
-        if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
+        if not force_refresh and _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
             return _sanitize_df(_cache_data).copy()
     try:
         sheet = _get_sheet()
@@ -274,7 +280,7 @@ def load_data_from_gsheet() -> pd.DataFrame:
         return df.copy()
     except Exception as e:
         _is_offline = True
-        print(f"[GSheet] load error: {e}")
+        _logger.error("[GSheet] load error: %s", e)
         with _gs_lock:
             if _cache_data is not None:
                 return _sanitize_df(_cache_data).copy()
@@ -308,37 +314,38 @@ def get_offline_status() -> dict:
     Returns:
         dict: Status mapping containing 'online' (bool), 'pending_count' (int), and 'last_cache_time' (float).
     """
+    global _is_offline, _cache_time
     _load_offline_queue()
     return {
-        "online": not _is_offline,
+        "online": not _is_offline and _has_creds(),
         "pending_count": len(_offline_queue),
         "last_cache_time": _cache_time,
     }
 
 
-def add_offline_entry(row_dict: dict):
-    """Queue a work entry locally when offline and update the in-memory cached DataFrame.
+def add_offline_entry(entry_dict: dict):
+    """Add a work entry to the local offline queue buffer and update the cached DataFrame.
 
     Args:
-        row_dict (dict): Work entry dictionary mapping Hebrew COLUMNS headers.
+        entry_dict (dict): Work entry fields dictionary.
     """
-    global _cache_data, _offline_queue, _is_offline
-    _is_offline = True
+    global _cache_data, _is_offline
     _load_offline_queue()
-    _offline_queue.append(row_dict)
+    _offline_queue.append(entry_dict)
     _save_offline_queue()
+    _is_offline = True
 
+    # Immediately reflect new entry in local cached DataFrame
     with _gs_lock:
-        new_row_df = pd.DataFrame([row_dict])
+        new_df = pd.DataFrame([entry_dict])
         for col in COLUMNS:
-            if col not in new_row_df.columns:
-                new_row_df[col] = ""
-        new_row_df = new_row_df[COLUMNS]
-        if _cache_data is not None:
-            _cache_data = pd.concat([_cache_data, new_row_df], ignore_index=True)
+            if col not in new_df.columns:
+                new_df[col] = ""
+        new_df = new_df[COLUMNS]
+        if _cache_data is None or _cache_data.empty:
+            _cache_data = new_df
         else:
-            _cache_data = new_row_df.copy()
-
+            _cache_data = pd.concat([_cache_data, new_df], ignore_index=True)
 
 
 def append_row_to_gsheet(entry: WorkEntry):
@@ -347,45 +354,44 @@ def append_row_to_gsheet(entry: WorkEntry):
     _invalidate_cache()
 
 
-def edit_row_in_gsheet(row_id: int, entry: WorkEntry):
-    """Edit a work entry by index, updating Google Sheets or local cache/queue if offline.
+def edit_row_in_gsheet(row_id: int, new_entry: WorkEntry):
+    """Edit a single row in Google Sheets or local cache if offline.
 
     Args:
-        row_id (int): Zero-based row index.
-        entry (WorkEntry): Updated WorkEntry instance.
+        row_id (int): Zero-based index of row to edit.
+        new_entry (WorkEntry): Updated WorkEntry object.
     """
     global _cache_data, _is_offline
     try:
         sheet = _get_sheet()
-        sheet_row = row_id + 2
-        end_col = chr(64 + _N_COLS)
-        sheet.update([entry.to_sheet_row()], f"A{sheet_row}:{end_col}{sheet_row}",
-                     value_input_option="USER_ENTERED")
+        row_idx = row_id + 2
+        values = [new_entry.to_dict().get(c, "") for c in COLUMNS]
+        sheet.update(f"A{row_idx}:L{row_idx}", [values])
         _invalidate_cache()
     except Exception as e:
         _is_offline = True
-        print(f"[GSheet] edit error: {e}. Updating local cache.")
+        _logger.error("[GSheet] edit error: %s", e)
         with _gs_lock:
             if _cache_data is not None and row_id < len(_cache_data):
-                for col, val in entry.to_dict().items():
-                    _cache_data.at[row_id, col] = val
-                save_data_to_gsheet(_cache_data)
+                for c in COLUMNS:
+                    _cache_data.at[row_id, c] = new_entry.to_dict().get(c, "")
 
 
 def delete_row_in_gsheet(row_id: int):
-    """Delete a work entry by index, removing from Google Sheets or local cache/queue if offline.
+    """Delete a single row from Google Sheets or local cache if offline.
 
     Args:
-        row_id (int): Zero-based row index to delete.
+        row_id (int): Zero-based index of row to delete.
     """
     global _cache_data, _is_offline
     try:
         sheet = _get_sheet()
-        sheet.delete_rows(row_id + 2)
+        row_idx = row_id + 2
+        sheet.delete_rows(row_idx)
         _invalidate_cache()
     except Exception as e:
         _is_offline = True
-        print(f"[GSheet] delete error: {e}. Removing from local cache.")
+        _logger.error("[GSheet] delete error: %s", e)
         with _gs_lock:
             if _cache_data is not None and row_id < len(_cache_data):
                 _cache_data = _cache_data.drop(index=row_id).reset_index(drop=True)
@@ -398,7 +404,7 @@ def bulk_delete_rows_in_gsheet(row_ids: list):
     Args:
         row_ids (list): List of zero-based row indices to delete.
     """
-    df = load_data_from_gsheet()
+    df = load_data_from_gsheet(force_refresh=True)
     valid_ids = [i for i in row_ids if i < len(df)]
     if not valid_ids:
         return

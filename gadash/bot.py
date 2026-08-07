@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from datetime import date, datetime, timedelta
 
@@ -22,6 +23,8 @@ from gadash.workers import (
     _load_workers,
     _verify_worker,
 )
+
+_logger = logging.getLogger(__name__)
 
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
 
@@ -413,18 +416,17 @@ def start_telegram_bot():
 
     token = os.getenv("BOT_TOKEN")
     if not token:
-        print("❌ BOT_TOKEN not set — Telegram bot will not start")
+        _logger.warning("BOT_TOKEN not set — Telegram bot will not start")
         return
 
-    print("[BOT] Thread starting...", flush=True)
+    _logger.info("[BOT] Thread starting...")
     try:
         _telegram_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_telegram_loop)
         tg = ApplicationBuilder().token(token).build()
-        print("[BOT] App built OK", flush=True)
-    except Exception as e:
-        print(f"[BOT] ERROR: {e}", flush=True)
-        import traceback; traceback.print_exc()
+        _logger.info("[BOT] App built OK")
+    except Exception:
+        _logger.exception("[BOT] Failed to build application")
         return
 
     conv = ConversationHandler(
@@ -534,8 +536,8 @@ def start_telegram_bot():
                     for client_name, last_dt in inactive.items():
                         lines.append(f"• {client_name} (אחרון: {last_dt})")
                     await _broadcast(subs, "\n".join(lines))
-        except Exception as e:
-            print(f"[BOT] Morning report error: {e}")
+        except Exception:
+            _logger.exception("[BOT] Morning report error")
 
     async def _evening_job(context):
         date_str = datetime.now().strftime("%Y-%m-%d")
@@ -549,8 +551,8 @@ def start_telegram_bot():
                     "לדיווח דרך הבוט — שלח 'הזן עבודה חדשה'"
                 )
                 await _broadcast(subs, msg)
-        except Exception as e:
-            print(f"[BOT] Evening reminder error: {e}")
+        except Exception:
+            _logger.exception("[BOT] Evening reminder error")
 
     async def _run():
         global _telegram_app
@@ -562,17 +564,17 @@ def start_telegram_bot():
             tg.job_queue.run_daily(_morning_job, time=_dt.time(8, 0))
             tg.job_queue.run_daily(_evening_job, time=_dt.time(18, 0))
         else:
-            print("[BOT] JobQueue unavailable — install python-telegram-bot[job-queue] for scheduled reports")
+            _logger.warning("[BOT] JobQueue unavailable — install python-telegram-bot[job-queue] for scheduled reports")
 
         explicit_url = os.environ.get("WEB_APP_URL")
         if explicit_url:
             webhook_url = f"{explicit_url}/webhook/{token}"
             try:
                 await tg.bot.set_webhook(webhook_url)
-                print(f"[BOT] Webhook set: {webhook_url}", flush=True)
+                _logger.info("[BOT] Webhook set: %s", webhook_url)
                 await asyncio.Event().wait()
             except Exception as e:
-                print(f"[BOT] Webhook failed ({e}), falling back to polling", flush=True)
+                _logger.warning("[BOT] Webhook failed (%s), falling back to polling", e)
                 await tg.updater.start_polling()
                 await asyncio.Event().wait()
         else:

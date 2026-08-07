@@ -6,6 +6,9 @@ import pytest
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+import pandas as pd
+from datetime import date
+
 from app import app, WorkEntry, COLUMNS, VALID_TASKS
 
 
@@ -296,6 +299,79 @@ class TestFlaskRoutes:
         res = client.get("/api/fields")
         assert res.status_code == 200
         assert res.is_json
+
+
+# ── Sheet mutation routes (row_id addressing) ──────────────────────────────────
+# Regression coverage for two bugs found & fixed while auditing this project:
+#   1. /api/dashboard cached "no data" responses inconsistently (app.py).
+#   2. edit/delete/patch used a possibly-stale cached df to address rows by
+#      position, risking writes to the wrong row under concurrent edits.
+
+class TestSheetMutations:
+
+    def _seed(self, mock_gsheet, rows):
+        mock_gsheet["df"] = pd.DataFrame(rows, columns=COLUMNS)
+
+    def test_edit_updates_correct_row(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
+            WorkEntry(client="לקוח ב", date="2025-06-02", task="קציר", entered_by="Web").to_dict(),
+        ])
+        res = client.post("/edit/1", data={
+            "שם לקוח": "לקוח ב מעודכן", "תאריך": "2025-06-02", "עבודה": "ריסוס",
+        }, headers=CSRF_HEADER)
+        assert res.status_code == 302
+        df = mock_gsheet["df"]
+        assert df.at[0, "שם לקוח"] == "לקוח א"          # untouched
+        assert df.at[1, "שם לקוח"] == "לקוח ב מעודכן"    # updated
+        assert df.at[1, "עבודה"] == "ריסוס"
+
+    def test_edit_out_of_range_row_does_not_crash(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
+        ])
+        res = client.post("/edit/5", data={
+            "שם לקוח": "משהו", "תאריך": "2025-06-02", "עבודה": "ריסוס",
+        }, headers=CSRF_HEADER)
+        assert res.status_code == 302
+        assert len(mock_gsheet["df"]) == 1  # unchanged
+
+    def test_delete_removes_correct_row(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
+            WorkEntry(client="לקוח ב", date="2025-06-02", task="קציר", entered_by="Web").to_dict(),
+        ])
+        res = client.post("/delete/0", headers=CSRF_HEADER)
+        assert res.status_code == 302
+        df = mock_gsheet["df"]
+        assert len(df) == 1
+        assert df.at[0, "שם לקוח"] == "לקוח ב"
+
+    def test_patch_cell_updates_correct_field(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
+        ])
+        res = client.patch("/api/entries/0", json={"field": "שעות", "value": "7.5"},
+                            headers=CSRF_HEADER, content_type="application/json")
+        assert res.status_code == 200
+        assert mock_gsheet["df"].at[0, "שעות"] == "7.5"
+
+    def test_dashboard_reflects_seeded_data(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="לקוח א", date=date.today().strftime("%Y-%m-%d"),
+                      task="חריש", hours="4", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/api/dashboard")
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["kpis"]["total"] == 1
+
+    def test_dashboard_empty_and_populated_are_both_cached_consistently(self, client, mock_gsheet):
+        # Covers the fixed bug: the empty-data branch used to skip caching,
+        # so consecutive calls returned different `updated_at` timestamps.
+        res1 = client.get("/api/dashboard")  # empty df from fixture default
+        res2 = client.get("/api/dashboard")
+        assert res1.get_json()["updated_at"] == res2.get_json()["updated_at"]
 
 
 # ── WorkEntry date validation ──────────────────────────────────────────────────

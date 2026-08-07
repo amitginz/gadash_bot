@@ -30,6 +30,11 @@ env/
 .DS_Store
 Thumbs.db
 
+# Test/coverage artifacts
+.coverage
+htmlcov/
+*.log
+
 # Screenshots & generated diagrams
 scr_*.png
 uml_*.png
