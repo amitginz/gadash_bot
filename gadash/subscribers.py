@@ -1,6 +1,9 @@
+import logging
 import threading
 
 from gadash.sheets import _get_subscribers_sheet
+
+_logger = logging.getLogger(__name__)
 
 _subscribers_cache: set | None = None
 _subscribers_lock = threading.Lock()
@@ -37,4 +40,4 @@ def _add_subscriber(chat_id: int):
         if ws:
             ws.append_row([str(chat_id)])
     except Exception as e:
-        print(f"[Subscribers] save error: {e}")
+        _logger.error("[Subscribers] save error: %s", e)

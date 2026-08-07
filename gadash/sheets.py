@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import threading
 import time
@@ -8,6 +9,8 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 
 from gadash.models import COLUMNS, _N_COLS, WorkEntry
+
+_logger = logging.getLogger(__name__)
 
 _gs_client  = None
 _gs_lock    = threading.Lock()
@@ -187,7 +190,7 @@ def _save_field_coord(name: str, lat: float, lng: float):
                 _coords_cache[name] = {"lat": lat, "lng": lng}
                 _coords_cache_time = time.time()
     except Exception as e:
-        print(f"[FieldCoords] save error: {e}")
+        _logger.error("[FieldCoords] save error: %s", e)
 
 
 def load_passwords_from_sheet() -> dict:
@@ -211,10 +214,11 @@ def save_passwords_to_sheet(web_password: str, worker_password: str):
         pass
 
 
-def load_data_from_gsheet() -> pd.DataFrame:
+def load_data_from_gsheet(force_refresh: bool = False) -> pd.DataFrame:
     global _cache_data, _cache_time
     with _gs_lock:
-        if _cache_data is not None and (time.time() - _cache_time) < _CACHE_TTL:
+        if (not force_refresh and _cache_data is not None
+                and (time.time() - _cache_time) < _CACHE_TTL):
             return _cache_data.copy()
     try:
         sheet = _get_sheet()
@@ -234,7 +238,7 @@ def load_data_from_gsheet() -> pd.DataFrame:
             _cache_time = time.time()
         return df.copy()
     except Exception as e:
-        print(f"[GSheet] load error: {e}")
+        _logger.error("[GSheet] load error: %s", e)
         return pd.DataFrame(columns=COLUMNS)
 
 
@@ -260,7 +264,9 @@ def delete_row_in_gsheet(row_id: int):
 
 
 def bulk_delete_rows_in_gsheet(row_ids: list):
-    df = load_data_from_gsheet()
+    # save_data_to_gsheet() below rewrites the whole sheet from this snapshot,
+    # so a stale cached df could silently drop rows added since the cache was filled.
+    df = load_data_from_gsheet(force_refresh=True)
     valid_ids = [i for i in row_ids if i < len(df)]
     if not valid_ids:
         return

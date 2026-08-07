@@ -1,11 +1,14 @@
 import collections
 import json
+import logging
 import os
 import threading
 import time
 from datetime import datetime
 
 from gadash.sheets import _get_audit_sheet
+
+_logger = logging.getLogger(__name__)
 
 AUDIT_LOG_FILE = "audit.log"
 
@@ -74,4 +77,4 @@ def _flush_audit_to_sheets():
                     except Exception:
                         pass
         except Exception as e:
-            print(f"[Audit] flush error: {e}")
+            _logger.error("[Audit] flush error: %s", e)

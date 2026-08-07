@@ -19,6 +19,11 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 try:
     import google.generativeai as _genai
 except ImportError:
@@ -367,7 +372,14 @@ def edit(row_id):
     df = load_data_from_gsheet()
     if request.method == "POST":
         try:
-            original_entered_by = df.at[row_id, "מזין"] if row_id < len(df) else "Web"
+            # Re-read uncached right before the positional write: row_id is an index
+            # into the sheet, so a stale cache could mean this now points at a
+            # different (or deleted) row if someone else edited concurrently.
+            fresh_df = load_data_from_gsheet(force_refresh=True)
+            if row_id >= len(fresh_df):
+                flash("הרשומה כבר לא קיימת — ייתכן שנמחקה על ידי משתמש אחר ❌", "danger")
+                return redirect(url_for("index"))
+            original_entered_by = fresh_df.at[row_id, "מזין"]
             entry = WorkEntry.from_form(request.form, entered_by=original_entered_by)
             edit_row_in_gsheet(row_id, entry)
             _log_audit("edit", "Web", f"row {row_id}: {entry.client} | {entry.date}")
@@ -393,8 +405,11 @@ def edit(row_id):
 @login_required
 def delete(row_id):
     try:
-        df = load_data_from_gsheet()
-        detail = df.iloc[row_id].get("שם לקוח", str(row_id)) if row_id < len(df) else str(row_id)
+        df = load_data_from_gsheet(force_refresh=True)
+        if row_id >= len(df):
+            flash("הרשומה כבר לא קיימת — ייתכן שנמחקה על ידי משתמש אחר ⚠️", "warning")
+            return redirect(url_for("index"))
+        detail = df.iloc[row_id].get("שם לקוח", str(row_id))
         delete_row_in_gsheet(row_id)
         _log_audit("delete", "Web", f"row {row_id}: {detail}")
         flash("הרשומה נמחקה ✅", "success")
@@ -564,7 +579,7 @@ def api_patch_entry(row_id):
     editable = [c for c in COLUMNS if c != "מזין"]
     if field not in editable:
         return jsonify({"error": f"שדה לא תקין: {field}"}), 400
-    df = load_data_from_gsheet()
+    df = load_data_from_gsheet(force_refresh=True)
     if row_id >= len(df):
         return jsonify({"error": "שורה לא קיימת"}), 404
     patch_cell_in_gsheet(row_id, field, value)
@@ -1077,6 +1092,8 @@ def api_dashboard():
             "updated_at": datetime.now().strftime("%H:%M:%S"),
         }
         if df.empty:
+            _dashboard_cache = {"_key": cache_key, "data": empty_resp}
+            _dashboard_cache_time = time.time()
             return jsonify(empty_resp)
 
         now          = datetime.now()
