@@ -18,7 +18,9 @@ from gadash.models import COLUMNS
 
 
 @pytest.fixture(autouse=True)
-def mock_gsheet(monkeypatch):
+def mock_gsheet(request, monkeypatch):
+    if "test_offline" in request.node.nodeid or "test_sync" in request.node.nodeid:
+        return None
     state = {"df": pd.DataFrame(columns=COLUMNS)}
 
     def fake_load(force_refresh: bool = False):

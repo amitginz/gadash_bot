@@ -37,6 +37,11 @@ def _invalidate_cache():
     _cache_time = 0.0
 
 
+def _has_creds() -> bool:
+    """Check whether Google Service Account credentials exist via env or local file."""
+    return bool(os.environ.get("GOOGLE_CREDS") or os.path.exists("credentials.json"))
+
+
 def _init_gs_client():
     global _gs_client
     if _gs_client is not None:
@@ -53,6 +58,8 @@ def _init_gs_client():
 
 def _get_sheet():
     global _gs_client
+    if not _has_creds():
+        raise RuntimeError("No Google credentials found.")
     last_exc = None
     for attempt in range(3):
         with _gs_lock:
@@ -63,7 +70,7 @@ def _get_sheet():
                 last_exc = e
                 _gs_client = None
         if attempt < 2:
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(1.0 * (attempt + 1))
     raise last_exc
 
 
@@ -329,7 +336,7 @@ def add_offline_entry(entry_dict: dict):
     Args:
         entry_dict (dict): Work entry fields dictionary.
     """
-    global _cache_data, _is_offline
+    global _cache_data, _cache_time, _is_offline
     _load_offline_queue()
     _offline_queue.append(entry_dict)
     _save_offline_queue()
@@ -346,6 +353,7 @@ def add_offline_entry(entry_dict: dict):
             _cache_data = new_df
         else:
             _cache_data = pd.concat([_cache_data, new_df], ignore_index=True)
+        _cache_time = time.time()
 
 
 def append_row_to_gsheet(entry: WorkEntry):
@@ -442,17 +450,18 @@ def save_data_to_gsheet(df: pd.DataFrame):
         df (pd.DataFrame): DataFrame of work entries to save.
     """
     global _cache_data, _cache_time, _is_offline
+    df_clean = df.copy() if df is not None and not df.empty else pd.DataFrame(columns=COLUMNS)
     for col in COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-    df_clean = df[COLUMNS]
+        if col not in df_clean.columns:
+            df_clean[col] = ""
+    df_clean = _sanitize_df(df_clean[COLUMNS])
 
     try:
         sheet = _get_sheet()
         sheet.clear()
         sheet.append_row(COLUMNS)
         if not df_clean.empty:
-            rows = df_clean[COLUMNS].fillna("").astype(str).values.tolist()
+            rows = df_clean.fillna("").astype(str).values.tolist()
             sheet.append_rows(rows, value_input_option="USER_ENTERED")
         with _gs_lock:
             _cache_data = df_clean.copy()
