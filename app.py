@@ -45,6 +45,10 @@ from gadash.sheets import (
     save_passwords_to_sheet,
 )
 from gadash.sync import sync_offline_buffer
+from geofence import (
+    calculate_polygon_dunam_area, delete_field_polygon,
+    get_fields_data, save_field_polygon,
+)
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
     _verify_worker,
@@ -1073,27 +1077,49 @@ def api_fields():
     try:
         df = load_data_from_gsheet()
         coords = _load_field_coords()
-        if df.empty:
-            return jsonify([])
-
-        df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
-        df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
-        df = df[df["שם חלקה"] != ""]
+        poly_data = {f["name"]: f for f in get_fields_data()}
+        df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0) if not df.empty else []
+        if not df.empty:
+            df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
+            df = df[df["שם חלקה"] != ""]
 
         result = []
-        for field_name, grp in df.groupby("שם חלקה"):
-            crops   = grp["גידול"].dropna().replace("", None).dropna()
-            clients = grp["שם לקוח"].dropna()
-            dates   = grp["תאריך"].dropna()
+        processed_fields = set()
+        
+        if not df.empty:
+            for field_name, grp in df.groupby("שם חלקה"):
+                processed_fields.add(field_name)
+                crops   = grp["גידול"].dropna().replace("", None).dropna()
+                clients = grp["שם לקוח"].dropna()
+                dates   = grp["תאריך"].dropna()
+                poly = poly_data.get(field_name, {})
+                result.append({
+                    "name":       field_name,
+                    "hours":      round(float(grp["_שעות"].sum()), 1),
+                    "jobs":       int(len(grp)),
+                    "crop":       crops.mode().iloc[0] if not crops.empty else "",
+                    "client":     clients.mode().iloc[0] if not clients.empty else "",
+                    "last_date":  dates.max() if not dates.empty else "",
+                    "lat":        coords[field_name]["lat"] if field_name in coords else None,
+                    "lng":        coords[field_name]["lng"] if field_name in coords else None,
+                    "polygon":    poly.get("coordinates"),
+                    "area_dunam": poly.get("area_dunam", 0.0),
+                })
+
+        all_other_names = (set(coords.keys()) | set(poly_data.keys())) - processed_fields
+        for field_name in all_other_names:
+            poly = poly_data.get(field_name, {})
             result.append({
-                "name":      field_name,
-                "hours":     round(float(grp["_שעות"].sum()), 1),
-                "jobs":      int(len(grp)),
-                "crop":      crops.mode().iloc[0] if not crops.empty else "",
-                "client":    clients.mode().iloc[0] if not clients.empty else "",
-                "last_date": dates.max() if not dates.empty else "",
-                "lat":       coords[field_name]["lat"] if field_name in coords else None,
-                "lng":       coords[field_name]["lng"] if field_name in coords else None,
+                "name":       field_name,
+                "hours":      0.0,
+                "jobs":       0,
+                "crop":       "",
+                "client":     "",
+                "last_date":  "",
+                "lat":        coords[field_name]["lat"] if field_name in coords else None,
+                "lng":        coords[field_name]["lng"] if field_name in coords else None,
+                "polygon":    poly.get("coordinates"),
+                "area_dunam": poly.get("area_dunam", 0.0),
             })
 
         result.sort(key=lambda x: x["hours"], reverse=True)
@@ -1113,6 +1139,37 @@ def api_fields_coords():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/fields/polygon", methods=["POST"])
+@login_required
+def api_fields_polygon():
+    """Save or update field polygon boundary coordinates locally in fields.csv."""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    coords = data.get("coordinates")
+    if not name or not coords or not isinstance(coords, list) or len(coords) < 3:
+        return jsonify({"ok": False, "error": "Invalid field polygon coordinates"}), 400
+    try:
+        save_field_polygon(name, coords)
+        _log_audit("save-polygon", "Web", f"field: {name}")
+        return jsonify({"ok": True, "name": name, "area_dunam": calculate_polygon_dunam_area(coords)})
+    except Exception as e:
+        _logger.error("[API] save polygon error: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/fields/polygon/<name>", methods=["DELETE"])
+@login_required
+def api_delete_fields_polygon(name):
+    """Delete field polygon boundary coordinates locally."""
+    try:
+        delete_field_polygon(name)
+        _log_audit("delete-polygon", "Web", f"field: {name}")
+        return jsonify({"ok": True, "name": name})
+    except Exception as e:
+        _logger.error("[API] delete polygon error: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # geotagging
@@ -1291,4 +1348,13 @@ if os.environ.get("BOT_TOKEN"):
     _bot_thread.start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "127.0.0.1")
+    try:
+        app.run(host=host, port=port)
+    except OSError as err:
+        if getattr(err, "winerror", None) == 10013 or "forbidden" in str(err).lower():
+            print(f"\n[Warning] Port {port} is reserved by Windows (Hyper-V / WinSock 10013). Retrying on port 5000...")
+            app.run(host="127.0.0.1", port=5000)
+        else:
+            raise

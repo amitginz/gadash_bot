@@ -5,6 +5,7 @@
 {% block extra_head %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
 {% endblock %}
 
 {% block extra_style %}
@@ -71,6 +72,25 @@
   .leaflet-control-geosearch form input { font-size: .9rem; width: 240px; }
   .leaflet-control-geosearch .results { direction: ltr; }
   .leaflet-control-geosearch a.reset { line-height: 30px; }
+
+  .drawing-action-bar {
+    display: none;
+    position: absolute;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: #ffffff;
+    border: 2px solid #3730a3;
+    border-radius: 30px;
+    padding: .45rem 1.2rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+    direction: rtl;
+    align-items: center;
+    gap: .6rem;
+    font-size: .88rem;
+  }
+  .drawing-action-bar.show { display: flex; }
 {% endblock %}
 
 {% block content %}
@@ -98,7 +118,22 @@
 </div>
 
 <!-- Map + Panel -->
-<div class="map-wrap">
+<div class="map-wrap" style="position: relative;">
+
+  <!-- Floating Drawing Action Bar -->
+  <div id="drawingActionBar" class="drawing-action-bar shadow-sm">
+    <span class="fw-bold"><i class="bi bi-pentagon-fill me-1" style="color:#3730a3"></i>📐 הגדרת שטח עבור: <strong id="drawingFieldName">--</strong></span>
+    <span id="drawingVertexCount" class="badge bg-primary rounded-pill px-2 py-1">0/12 קודקודים</span>
+    <button id="btnFinishDraw" class="btn btn-sm btn-success rounded-pill px-3" onclick="finishPolygonDraw()" disabled>
+      ✅ סיום ושמירה
+    </button>
+    <button id="btnUndoVertex" class="btn btn-sm btn-outline-warning text-dark rounded-pill px-3" onclick="undoPolygonVertex()">
+      ↩️ ביטול נקודה
+    </button>
+    <button id="btnCancelDraw" class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="cancelPolygonDraw()">
+      ❌ ביטול
+    </button>
+  </div>
 
   <!-- Side panel -->
   <div class="side-panel" id="sidePanel">
@@ -115,6 +150,7 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.umd.js"></script>
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
@@ -192,6 +228,7 @@ function addMarker(field) {
 
     poly.bindPopup(`
       <div class="popup-title">🌾 ${field.name} (גבולות חלקה)</div>
+      ${field.area_dunam ? `<div class="popup-row">📏 שטח: <span>${field.area_dunam} דונם</span></div>` : ""}
       <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
       <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
       ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${field.crop}</span></div>` : ""}
@@ -218,6 +255,7 @@ function addMarker(field) {
       ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${field.crop}</span></div>` : ""}
       ${field.client ? `<div class="popup-row">👤 לקוח: <span>${field.client}</span></div>` : ""}
       ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${formatDate(field.last_date)}</span></div>` : ""}
+      <button class="btn btn-sm btn-outline-primary w-100 mt-2" onclick="startDefineArea('${field.name.replace(/'/g, "\\'")}')">📐 הגדרת שטח</button>
       <div style="margin-top:.5rem;font-size:.72rem;color:#888">גרור לשינוי מיקום</div>
     `);
 
@@ -271,6 +309,124 @@ function highlightCard(name) {
   else if (polygons[name]) polygons[name].openPopup();
 }
 
+
+
+// ── Polygon Area Definition ("הגדרת שטח") Engine ──────────────────────────────
+let activeAreaField = null;
+let areaPolygonDrawer = null;
+
+function startDefineArea(fieldName) {
+  stopPlacing();
+  activeAreaField = fieldName;
+
+  if (areaPolygonDrawer) {
+    try { areaPolygonDrawer.disable(); } catch(e) {}
+  }
+
+  areaPolygonDrawer = new L.Draw.Polygon(map, {
+    allowIntersection: false,
+    showArea: true,
+    shapeOptions: { color: '#3730a3', fillColor: '#6366f1', fillOpacity: 0.4 }
+  });
+
+  areaPolygonDrawer.enable();
+
+  const nameEl = document.getElementById("drawingFieldName");
+  const countEl = document.getElementById("drawingVertexCount");
+  const finishBtn = document.getElementById("btnFinishDraw");
+  const bar = document.getElementById("drawingActionBar");
+
+  if (nameEl) nameEl.textContent = fieldName;
+  if (countEl) countEl.textContent = "0/12 קודקודים";
+  if (finishBtn) finishBtn.disabled = true;
+  if (bar) bar.classList.add("show");
+}
+
+function updateDrawingProgress() {
+  if (!areaPolygonDrawer || !areaPolygonDrawer._enabled) return;
+  const poly = areaPolygonDrawer._poly;
+  const count = poly ? poly.getLatLngs().length : 0;
+  
+  const countEl = document.getElementById("drawingVertexCount");
+  const finishBtn = document.getElementById("btnFinishDraw");
+
+  if (countEl) countEl.textContent = `${count}/12 קודקודים`;
+  if (finishBtn) finishBtn.disabled = count < 3;
+
+  if (count >= 12) {
+    alert("הגעת למגבלה של 12 קודקודים");
+    finishPolygonDraw();
+  }
+}
+
+function finishPolygonDraw() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.completeShape();
+  }
+}
+
+function undoPolygonVertex() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.deleteLastVertex();
+    updateDrawingProgress();
+  }
+}
+
+function cancelPolygonDraw() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+  }
+  activeAreaField = null;
+  document.getElementById("drawingActionBar")?.classList.remove("show");
+}
+
+// Right-click vertex placement (suppresses browser context menu)
+map.on("contextmenu", function(e) {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    e.originalEvent.preventDefault();
+    areaPolygonDrawer.addVertex(e.latlng);
+    updateDrawingProgress();
+  }
+});
+
+// Update progress on vertex added
+map.on(L.Draw.Event.DRAWVERTEX, function(e) {
+  updateDrawingProgress();
+});
+
+// Save drawn polygon when finalized
+map.on(L.Draw.Event.CREATED, async function(e) {
+  if (e.layerType === "polygon" && activeAreaField) {
+    const rawLatLngs = e.layer.getLatLngs()[0];
+    const coords = rawLatLngs.map(pt => [pt.lat, pt.lng]);
+    const fieldName = activeAreaField;
+    activeAreaField = null;
+
+    document.getElementById("drawingActionBar")?.classList.remove("show");
+
+    try {
+      const res = await fetch('/api/fields/polygon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify({ name: fieldName, coordinates: coords })
+      });
+      if (!res.ok) {
+        const errTxt = await res.text();
+        alert("שגיאה בשמירת פוליגון: " + errTxt);
+        return;
+      }
+      const data = await res.json();
+      if (data.ok) {
+        loadData();
+      } else {
+        alert("שגיאה בשמירת פוליגון: " + (data.error || "שגיאה לא ידועה"));
+      }
+    } catch(err) {
+      alert("שגיאה בשמירת פוליגון: " + err);
+    }
+  }
+});
+
 // ── Custom Point Pin Prompt ────────────────────────────────────────────────────
 function promptAddCustomPin() {
   const name = prompt("הכנס שם לנקודת המיקום החדשה (למשל: אזור עבודה דרום, נקודת ציוד):");
@@ -288,9 +444,17 @@ function promptAddCustomPin() {
 
 // ── Placing mode ──────────────────────────────────────────────────────────────
 function startPlacing(name) {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+    activeAreaField = null;
+  }
   placingField = name;
   map.getContainer().style.cursor = "crosshair";
-  document.getElementById("placingHint").classList.add("show");
+  const hintEl = document.getElementById("placingHint");
+  if (hintEl) {
+    hintEl.textContent = `📍 לחץ על המפה לקביעת מיקום הנקודה עבור '${name}'`;
+    hintEl.classList.add("show");
+  }
   document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
   const card = document.getElementById("card-" + CSS.escape(name));
   if (card) card.classList.add("placing");
@@ -298,8 +462,12 @@ function startPlacing(name) {
 
 function stopPlacing() {
   placingField = null;
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+    activeAreaField = null;
+  }
   map.getContainer().style.cursor = "";
-  document.getElementById("placingHint").classList.remove("show");
+  document.getElementById("placingHint")?.classList.remove("show");
   document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
 }
 
@@ -347,7 +515,7 @@ function renderPanel() {
     const cardClass  = hasCoords ? "" : " no-coords";
     const btnLabel   = hasCoords ? "הזז" : "סמן";
     const btnClass   = hasCoords ? "reposition" : "";
-    const polyBadge  = f.polygon ? '<span class="badge-polygon">Polygon</span>' : '';
+    const polyBadge  = f.polygon ? `<span class="badge-polygon">${f.area_dunam ? f.area_dunam + ' דונם' : 'שטח הוגדר'}</span>` : '';
 
     html += `
     <div class="field-card${cardClass}" id="card-${CSS.escape(f.name)}"
@@ -361,10 +529,16 @@ function renderPanel() {
         ${f.client ? `<span>👤 ${f.client}</span>` : ""}
         ${f.last_date ? `<span>📅 ${formatDate(f.last_date)}</span>` : ""}
       </div>
-      <button class="btn-place ${btnClass}"
-        onclick="event.stopPropagation(); handlePlaceBtn('${f.name.replace(/'/g,"\\'")}', ${hasCoords})">
-        📍 ${btnLabel}
-      </button>
+      <div class="d-flex gap-1 mt-2">
+        <button class="btn-place ${btnClass} flex-grow-1"
+          onclick="event.stopPropagation(); handlePlaceBtn('${f.name.replace(/'/g,"\\'")}', ${hasCoords})">
+          📍 ${btnLabel}
+        </button>
+        <button class="btn btn-sm btn-outline-primary flex-grow-1 py-1" style="font-size:.72rem"
+          onclick="event.stopPropagation(); startDefineArea('${f.name.replace(/'/g,"\\'")}')">
+          📐 הגדרת שטח
+        </button>
+      </div>
     </div>`;
   }
 
@@ -391,7 +565,7 @@ function handlePlaceBtn(name, hasCoords) {
 }
 
 // ── Load data ─────────────────────────────────────────────────────────────────
-(async function load() {
+async function loadData() {
   try {
     const res = await fetch("/api/fields");
     if (!res.ok) throw new Error(await res.text());
@@ -413,8 +587,11 @@ function handlePlaceBtn(name, hasCoords) {
       map.fitBounds(bounds.pad(0.2));
     }
   } catch(e) {
-    document.getElementById("loadingMsg").textContent = "שגיאה בטעינת נתונים: " + e.message;
+    const msgEl = document.getElementById("loadingMsg");
+    if (msgEl) msgEl.textContent = "שגיאה בטעינת נתונים: " + e.message;
   }
-})();
+}
+
+loadData();
 </script>
 {% endblock %}
