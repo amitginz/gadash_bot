@@ -10,3 +10,4 @@ python-telegram-bot[job-queue]==20.7
 Flask-WTF==1.2.1
 Flask-Limiter==3.5.0
 python-dotenv==1.0.1
+shapely==2.0.1
