@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from functools import wraps
 from io import BytesIO
 from urllib.parse import urlencode
-from geofence import get_fields_data, match_coordinate_to_field
+from geofence import get_fields_data, match_coordinate_to_field, calculate_polygon_dunam_area
 
 
 import pandas as pd
@@ -37,17 +37,17 @@ from gadash.bot import start_telegram_bot
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.service import create_entry
 from gadash.sheets import (
-    _invalidate_cache, _load_field_coords, _save_field_coord,
+    _invalidate_cache,
     add_offline_entry, append_row_to_gsheet, bulk_delete_rows_in_gsheet,
     delete_row_in_gsheet, edit_row_in_gsheet, get_offline_status,
     load_data_from_gsheet, load_passwords_from_sheet,
     patch_cell_in_gsheet, save_data_to_gsheet,
     save_passwords_to_sheet,
 )
+import gadash.sheets
 from gadash.sync import sync_offline_buffer
 from geofence import (
-    calculate_polygon_dunam_area, delete_field_polygon,
-    get_fields_data, save_field_polygon,
+    calculate_polygon_dunam_area, match_coordinate_to_field
 )
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
@@ -1071,55 +1071,124 @@ def fields_map():
     return render_template("fields_map.html")
 
 
-@app.route("/api/fields")
+@app.route("/api/fields", methods=["GET", "POST"])
 @login_required
 def api_fields():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        uid = data.get("uid")
+        name = data.get("name")
+        color = data.get("color", "")
+        type_ = data.get("type") # 'polygon' or 'pin'
+        
+        if not uid or not name or not type_:
+            return jsonify({"error": "missing uid, name, or type"}), 400
+            
+        try:
+            if type_ == "polygon":
+                coords = data.get("coordinates")
+                if not coords:
+                    return jsonify({"error": "missing coordinates"}), 400
+                gadash.sheets.save_polygon_to_sheet(uid, name, color, coords)
+                gadash.sheets.delete_pin_from_sheet(uid)
+                return jsonify({"ok": True, "uid": uid, "area_dunam": calculate_polygon_dunam_area(coords)})
+            elif type_ == "pin":
+                lat = data.get("lat")
+                lng = data.get("lng")
+                if lat is None or lng is None:
+                    return jsonify({"error": "missing lat/lng"}), 400
+                gadash.sheets.save_pin_to_sheet(uid, name, color, float(lat), float(lng))
+                gadash.sheets.delete_polygon_from_sheet(uid)
+                return jsonify({"ok": True, "uid": uid})
+            else:
+                return jsonify({"error": "invalid type"}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # GET method
     try:
         df = load_data_from_gsheet()
-        coords = _load_field_coords()
-        poly_data = {f["name"]: f for f in get_fields_data()}
+        polys = {p["uid"]: p for p in gadash.sheets.load_polygons_from_sheet()}
+        pins = {p["uid"]: p for p in gadash.sheets.load_pins_from_sheet()}
+        
         df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0) if not df.empty else []
         if not df.empty:
             df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
+            df["מזהה חלקה"] = df.get("מזהה חלקה", "").fillna("").str.strip()
             df = df[df["שם חלקה"] != ""]
 
+            # Create a combined key: prefer field_uid if exists, otherwise field name
+            def get_join_key(row):
+                return row["מזהה חלקה"] if row["מזהה חלקה"] else row["שם חלקה"]
+            df["_join_key"] = df.apply(get_join_key, axis=1)
+
         result = []
-        processed_fields = set()
+        processed_uids = set()
         
         if not df.empty:
-            for field_name, grp in df.groupby("שם חלקה"):
-                processed_fields.add(field_name)
+            for join_key, grp in df.groupby("_join_key"):
+                # join_key is either a UID or a Name
+                poly = polys.get(join_key)
+                pin = pins.get(join_key)
+                
+                # Fallback if matched by name
+                if not poly and not pin:
+                    for p in polys.values():
+                        if p["name"] == join_key:
+                            poly = p
+                            break
+                    for p in pins.values():
+                        if p["name"] == join_key:
+                            pin = p
+                            break
+
+                uid = poly["uid"] if poly else (pin["uid"] if pin else None)
+                if uid:
+                    processed_uids.add(uid)
+                
+                name = poly["name"] if poly else (pin["name"] if pin else grp["שם חלקה"].iloc[0])
+                color = poly["color"] if poly else (pin["color"] if pin else "")
+                
                 crops   = grp["גידול"].dropna().replace("", None).dropna()
                 clients = grp["שם לקוח"].dropna()
                 dates   = grp["תאריך"].dropna()
-                poly = poly_data.get(field_name, {})
+                
                 result.append({
-                    "name":       field_name,
+                    "uid":        uid,
+                    "name":       name,
+                    "color":      color,
                     "hours":      round(float(grp["_שעות"].sum()), 1),
                     "jobs":       int(len(grp)),
                     "crop":       crops.mode().iloc[0] if not crops.empty else "",
                     "client":     clients.mode().iloc[0] if not clients.empty else "",
                     "last_date":  dates.max() if not dates.empty else "",
-                    "lat":        coords[field_name]["lat"] if field_name in coords else None,
-                    "lng":        coords[field_name]["lng"] if field_name in coords else None,
-                    "polygon":    poly.get("coordinates"),
-                    "area_dunam": poly.get("area_dunam", 0.0),
+                    "lat":        pin["lat"] if pin else None,
+                    "lng":        pin["lng"] if pin else None,
+                    "polygon":    poly["coordinates"] if poly else None,
+                    "area_dunam": calculate_polygon_dunam_area(poly["coordinates"]) if poly else 0.0,
                 })
 
-        all_other_names = (set(coords.keys()) | set(poly_data.keys())) - processed_fields
-        for field_name in all_other_names:
-            poly = poly_data.get(field_name, {})
+        # Add fields that have no jobs
+        all_uids = set(polys.keys()) | set(pins.keys())
+        for uid in all_uids - processed_uids:
+            poly = polys.get(uid)
+            pin = pins.get(uid)
+            name = poly["name"] if poly else pin["name"]
+            color = poly["color"] if poly else (pin["color"] if pin else "")
+            
             result.append({
-                "name":       field_name,
+                "uid":        uid,
+                "name":       name,
+                "color":      color,
                 "hours":      0.0,
                 "jobs":       0,
                 "crop":       "",
                 "client":     "",
                 "last_date":  "",
-                "lat":        coords[field_name]["lat"] if field_name in coords else None,
-                "lng":        coords[field_name]["lng"] if field_name in coords else None,
-                "polygon":    poly.get("coordinates"),
-                "area_dunam": poly.get("area_dunam", 0.0),
+                "lat":        pin["lat"] if pin else None,
+                "lng":        pin["lng"] if pin else None,
+                "polygon":    poly["coordinates"] if poly else None,
+                "area_dunam": calculate_polygon_dunam_area(poly["coordinates"]) if poly else 0.0,
             })
 
         result.sort(key=lambda x: x["hours"], reverse=True)
@@ -1128,48 +1197,19 @@ def api_fields():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/fields/coords", methods=["POST"])
+@app.route("/api/fields/<uid>", methods=["DELETE"])
 @login_required
-def api_fields_coords():
-    data = request.get_json(silent=True)
-    if not data or "name" not in data or "lat" not in data or "lng" not in data:
-        return jsonify({"error": "missing fields"}), 400
+def api_fields_delete(uid):
+    """Delete a field (polygon or pin) by UID."""
     try:
-        _save_field_coord(str(data["name"]), float(data["lat"]), float(data["lng"]))
+        gadash.sheets.delete_polygon_from_sheet(uid)
+        gadash.sheets.delete_pin_from_sheet(uid)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/fields/polygon", methods=["POST"])
-@login_required
-def api_fields_polygon():
-    """Save or update field polygon boundary coordinates locally in fields.csv."""
-    data = request.get_json(silent=True) or {}
-    name = data.get("name")
-    coords = data.get("coordinates")
-    if not name or not coords or not isinstance(coords, list) or len(coords) < 3:
-        return jsonify({"ok": False, "error": "Invalid field polygon coordinates"}), 400
-    try:
-        save_field_polygon(name, coords)
-        _log_audit("save-polygon", "Web", f"field: {name}")
-        return jsonify({"ok": True, "name": name, "area_dunam": calculate_polygon_dunam_area(coords)})
-    except Exception as e:
-        _logger.error("[API] save polygon error: %s", e)
-        return jsonify({"ok": False, "error": str(e)}), 500
 
-
-@app.route("/api/fields/polygon/<name>", methods=["DELETE"])
-@login_required
-def api_delete_fields_polygon(name):
-    """Delete field polygon boundary coordinates locally."""
-    try:
-        delete_field_polygon(name)
-        _log_audit("delete-polygon", "Web", f"field: {name}")
-        return jsonify({"ok": True, "name": name})
-    except Exception as e:
-        _logger.error("[API] delete polygon error: %s", e)
-        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # geotagging

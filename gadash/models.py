@@ -5,10 +5,10 @@ from datetime import datetime as _dt
 
 COLUMNS = [
     "שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול",
-    "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין", "מזהה",
+    "כמות", "שעות", "כלי", "מפעיל", "הערות", "מזין", "מזהה", "מזהה חלקה",
 ]
 VALID_TASKS = {"חריש", "ריסוס", "קציר", "דיסוק", "אחר"}
-_N_COLS = len(COLUMNS)  # 12 → column L
+_N_COLS = len(COLUMNS)  # 13 → column M
 
 
 @dataclass
@@ -31,6 +31,7 @@ class WorkEntry:
     notes:      str = ""
     entered_by: str = ""
     uid:        str = ""
+    field_uid:  str = ""
 
     def __post_init__(self):
         """Validate required fields and compute deterministic UID if not present.
@@ -69,7 +70,7 @@ class WorkEntry:
             self.client, self.date, self.task, self.field_name,
             self.crop, self.amount, self.hours,
             self.tool, self.operator, self.notes, self.entered_by,
-            self.uid,
+            self.uid, self.field_uid,
         ]
 
     def to_dict(self) -> dict:
@@ -103,6 +104,7 @@ class WorkEntry:
             notes=str(d.get("הערות", "")),
             entered_by=str(d.get("מזין", "")),
             uid=str(d.get("מזהה", "")),
+            field_uid=str(d.get("מזהה חלקה", "")),
         )
 
     @classmethod
@@ -129,6 +131,7 @@ class WorkEntry:
             notes=form.get("הערות", ""),
             entered_by=entered_by,
             uid=form.get("מזהה", ""),
+            field_uid=form.get("מזהה חלקה", ""),
         )
 
     @classmethod
@@ -155,4 +158,5 @@ class WorkEntry:
             notes=user_data.get("הערות", ""),
             entered_by=full_name,
             uid=user_data.get("מזהה", ""),
+            field_uid=user_data.get("מזהה חלקה", ""),
         )

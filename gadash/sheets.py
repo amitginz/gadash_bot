@@ -89,17 +89,34 @@ def _get_settings_sheet():
             return None
 
 
-def _get_fieldcoords_sheet():
+def _get_polygons_sheet():
     global _gs_client
     with _gs_lock:
         try:
             _init_gs_client()
             wb = _gs_client.open("Gadash Data")
             try:
-                return wb.worksheet("FieldCoords")
+                return wb.worksheet("Polygons")
             except gspread.WorksheetNotFound:
-                ws = wb.add_worksheet("FieldCoords", rows=200, cols=3)
-                ws.append_row(["שם חלקה", "lat", "lng"])
+                ws = wb.add_worksheet("Polygons", rows=200, cols=4)
+                ws.append_row(["UID", "Name", "Color", "Coordinates"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _get_pins_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Pins")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Pins", rows=200, cols=4)
+                ws.append_row(["UID", "Name", "Color", "Coordinates"])
                 return ws
         except Exception:
             _gs_client = None
@@ -157,58 +174,112 @@ def _get_workers_sheet():
             return None
 
 
-def _load_field_coords() -> dict:
+def load_polygons_from_sheet() -> list:
     global _coords_cache, _coords_cache_time
-    with _gs_lock:
-        if _coords_cache is not None and (time.time() - _coords_cache_time) < _CACHE_TTL:
-            return dict(_coords_cache)
+    # Since we want to cache properly, maybe use a distinct cache for polygons
     try:
-        ws = _get_fieldcoords_sheet()
+        ws = _get_polygons_sheet()
         if not ws:
-            return {}
+            return []
         rows = ws.get_all_values()
-        coords = {}
+        polys = []
         for row in rows[1:]:
-            if len(row) >= 3 and row[0] and row[1] and row[2]:
+            if len(row) >= 4 and row[0]:
                 try:
-                    coords[row[0]] = {"lat": float(row[1]), "lng": float(row[2])}
-                except ValueError:
+                    coords = json.loads(row[3])
+                    polys.append({
+                        "uid": row[0],
+                        "name": row[1],
+                        "color": row[2],
+                        "coordinates": coords
+                    })
+                except Exception:
                     pass
-        with _gs_lock:
-            _coords_cache = coords
-            _coords_cache_time = time.time()
-        return dict(coords)
-    except Exception:
-        return {}
+        return polys
+    except Exception as e:
+        _logger.error("[Polygons] load error: %s", e)
+        return []
 
-
-def _save_field_coord(name: str, lat: float, lng: float):
-    """Save field pin coordinates to Google Sheets or update local memory cache if offline.
-
-    Args:
-        name (str): Field or point pin name.
-        lat (float): Latitude coordinate.
-        lng (float): Longitude coordinate.
-    """
-    global _coords_cache, _coords_cache_time
-    with _gs_lock:
-        if _coords_cache is None:
-            _coords_cache = {}
-        _coords_cache[name] = {"lat": lat, "lng": lng}
-        _coords_cache_time = time.time()
+def save_polygon_to_sheet(uid: str, name: str, color: str, coords: list):
     try:
-        ws = _get_fieldcoords_sheet()
+        ws = _get_polygons_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        coords_str = json.dumps(coords)
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.update([[uid, name, color, coords_str]], f"A{i}:D{i}")
+                return
+        ws.append_row([uid, name, color, coords_str])
+    except Exception as e:
+        _logger.error("[Polygons] save error: %s", e)
+
+def delete_polygon_from_sheet(uid: str):
+    try:
+        ws = _get_polygons_sheet()
         if not ws:
             return
         rows = ws.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.update([[name, lat, lng]], f"A{i}:C{i}")
-                break
-        else:
-            ws.append_row([name, lat, lng])
+            if row and row[0] == uid:
+                ws.delete_rows(i)
+                return
     except Exception as e:
-        _logger.error("[FieldCoords] save error: %s", e)
+        _logger.error("[Polygons] delete error: %s", e)
+
+def load_pins_from_sheet() -> list:
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return []
+        rows = ws.get_all_values()
+        pins = []
+        for row in rows[1:]:
+            if len(row) >= 4 and row[0]:
+                try:
+                    coords = json.loads(row[3])
+                    pins.append({
+                        "uid": row[0],
+                        "name": row[1],
+                        "color": row[2],
+                        "lat": coords[0],
+                        "lng": coords[1]
+                    })
+                except Exception:
+                    pass
+        return pins
+    except Exception as e:
+        _logger.error("[Pins] load error: %s", e)
+        return []
+
+def save_pin_to_sheet(uid: str, name: str, color: str, lat: float, lng: float):
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        coords_str = json.dumps([lat, lng])
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.update([[uid, name, color, coords_str]], f"A{i}:D{i}")
+                return
+        ws.append_row([uid, name, color, coords_str])
+    except Exception as e:
+        _logger.error("[Pins] save error: %s", e)
+
+def delete_pin_from_sheet(uid: str):
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.delete_rows(i)
+                return
+    except Exception as e:
+        _logger.error("[Pins] delete error: %s", e)
 
 
 def load_passwords_from_sheet() -> dict:
@@ -356,7 +427,17 @@ def add_offline_entry(entry_dict: dict):
         _cache_time = time.time()
 
 
+def _assign_field_uid_if_needed(entry: WorkEntry):
+    if entry.field_name and not entry.field_uid:
+        polys = load_polygons_from_sheet()
+        pins = load_pins_from_sheet()
+        for p in polys + pins:
+            if p["name"] == entry.field_name:
+                entry.field_uid = p["uid"]
+                break
+
 def append_row_to_gsheet(entry: WorkEntry):
+    _assign_field_uid_if_needed(entry)
     sheet = _get_sheet()
     sheet.append_row(entry.to_sheet_row(), value_input_option="USER_ENTERED")
     _invalidate_cache()
@@ -370,11 +451,12 @@ def edit_row_in_gsheet(row_id: int, new_entry: WorkEntry):
         new_entry (WorkEntry): Updated WorkEntry object.
     """
     global _cache_data, _is_offline
+    _assign_field_uid_if_needed(new_entry)
     try:
         sheet = _get_sheet()
         row_idx = row_id + 2
         values = [new_entry.to_dict().get(c, "") for c in COLUMNS]
-        sheet.update(f"A{row_idx}:L{row_idx}", [values])
+        sheet.update(f"A{row_idx}:M{row_idx}", [values])
         _invalidate_cache()
     except Exception as e:
         _is_offline = True
