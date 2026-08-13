@@ -134,10 +134,8 @@ function showLoader(msg) {
   const el = document.getElementById('pageLoader');
   if (el) { el.style.display = 'flex'; document.getElementById('loaderMsg').textContent = msg || 'אנא המתן…'; }
 }
-// Auto-attach to export links
-document.querySelectorAll('a[href*="/export"]').forEach(a => {
-  a.addEventListener('click', () => showLoader('מייצא נתונים…'));
-});
+// Note: Loader is intentionally not attached to export links because file downloads do not 
+// trigger a page navigation, which would otherwise leave the loader stuck indefinitely.
 // Hide loader if browser uses back/forward cache
 window.addEventListener('pageshow', e => {
   if (e.persisted) { const el = document.getElementById('pageLoader'); if (el) el.style.display = 'none'; }
