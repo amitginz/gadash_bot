@@ -679,7 +679,7 @@ def worker_undo_last():
     worker_name = session.get("worker_name", "")
     try:
         df = load_data_from_gsheet()
-        my = df[df["מזין"].str.contains(worker_name, case=False, na=False)]
+        my = df[df["מזין"].str.strip().str.casefold() == worker_name.strip().casefold()]
         if my.empty:
             flash("אין עבודות למחיקה ❌", "danger")
             return redirect(url_for("worker_index"))
@@ -718,7 +718,7 @@ def worker_index():
 
     try:
         df = load_data_from_gsheet()
-        my_df = df[df["מזין"].str.contains(worker_name, case=False, na=False)]
+        my_df = df[df["מזין"].str.strip().str.casefold() == worker_name.strip().casefold()]
         recent = my_df.tail(20).sort_values("תאריך", ascending=False).to_dict(orient="records")
         my_count = len(my_df)
     except Exception:

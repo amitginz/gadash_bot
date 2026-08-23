@@ -148,6 +148,11 @@ let markers      = {};      // fieldName → L.circleMarker
 let placingField = null;    // name of field being placed
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
 function hourColor(h) {
   if (h > 50) return "#dc3545";
   if (h > 10) return "#fd7e14";
@@ -176,12 +181,12 @@ function addMarker(field) {
   }).addTo(map);
 
   m.bindPopup(`
-    <div class="popup-title">📍 ${field.name}</div>
+    <div class="popup-title">📍 ${esc(field.name)}</div>
     <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
     <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
-    ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${field.crop}</span></div>` : ""}
-    ${field.client ? `<div class="popup-row">👤 לקוח מוביל: <span>${field.client}</span></div>` : ""}
-    ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${formatDate(field.last_date)}</span></div>` : ""}
+    ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${esc(field.crop)}</span></div>` : ""}
+    ${field.client ? `<div class="popup-row">👤 לקוח מוביל: <span>${esc(field.client)}</span></div>` : ""}
+    ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${esc(formatDate(field.last_date))}</span></div>` : ""}
     <div style="margin-top:.5rem;font-size:.72rem;color:#888">גרור לשינוי מיקום</div>
   `);
 
@@ -280,6 +285,7 @@ function renderPanel() {
 
   const positioned   = fields.filter(f => f.lat != null);
   const unpositioned = fields.filter(f => f.lat == null);
+  const ordered      = [...unpositioned, ...positioned];
 
   let html = "";
 
@@ -289,7 +295,7 @@ function renderPanel() {
     </div>`;
   }
 
-  for (const f of [...unpositioned, ...positioned]) {
+  ordered.forEach((f, i) => {
     const hasCoords  = f.lat != null;
     const bColor     = hasCoords ? badgeColor(f.hours) : "#adb5bd";
     const cardClass  = hasCoords ? "" : " no-coords";
@@ -297,24 +303,36 @@ function renderPanel() {
     const btnClass   = hasCoords ? "reposition" : "";
 
     html += `
-    <div class="field-card${cardClass}" id="card-${CSS.escape(f.name)}"
-         onclick="highlightCard('${f.name.replace(/'/g,"\\'")}')">
+    <div class="field-card${cardClass}" id="card-${CSS.escape(f.name)}" data-idx="${i}">
       <span class="badge-hours" style="background:${bColor}">${f.hours} ש׳</span>
-      <div class="field-name">${f.name}</div>
+      <div class="field-name">${esc(f.name)}</div>
       <div class="field-meta">
         <span>🔧 ${f.jobs} עבודות</span>
-        ${f.crop   ? `<span>🌱 ${f.crop}</span>` : ""}
-        ${f.client ? `<span>👤 ${f.client}</span>` : ""}
-        ${f.last_date ? `<span>📅 ${formatDate(f.last_date)}</span>` : ""}
+        ${f.crop   ? `<span>🌱 ${esc(f.crop)}</span>` : ""}
+        ${f.client ? `<span>👤 ${esc(f.client)}</span>` : ""}
+        ${f.last_date ? `<span>📅 ${esc(formatDate(f.last_date))}</span>` : ""}
       </div>
-      <button class="btn-place ${btnClass}"
-        onclick="event.stopPropagation(); handlePlaceBtn('${f.name.replace(/'/g,"\\'")}', ${hasCoords})">
+      <button class="btn-place ${btnClass}" data-idx="${i}">
         📍 ${btnLabel}
       </button>
     </div>`;
-  }
+  });
 
   panel.innerHTML = html;
+
+  panel.querySelectorAll(".field-card").forEach(card => {
+    card.addEventListener("click", () => {
+      const f = ordered[Number(card.dataset.idx)];
+      if (f) highlightCard(f.name);
+    });
+  });
+  panel.querySelectorAll(".btn-place").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const f = ordered[Number(btn.dataset.idx)];
+      if (f) handlePlaceBtn(f.name, f.lat != null);
+    });
+  });
 }
 
 function handlePlaceBtn(name, hasCoords) {
