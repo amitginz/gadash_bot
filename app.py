@@ -119,7 +119,10 @@ _LOGIN_WINDOW = 60
 def _check_rate_limit(ip: str) -> bool:
     now = time.time()
     attempts = [t for t in _login_attempts.get(ip, []) if now - t < _LOGIN_WINDOW]
-    _login_attempts[ip] = attempts
+    if attempts:
+        _login_attempts[ip] = attempts
+    else:
+        _login_attempts.pop(ip, None)
     return len(attempts) >= _LOGIN_MAX
 
 
@@ -491,7 +494,21 @@ def import_data():
                 flash(f"הקובץ גדול מדי — מקסימום 5 MB ❌", "danger")
                 return render_template("import.html")
             try:
-                new_df = pd.read_excel(file)
+                raw_df = pd.read_excel(file)
+                if "תאריך" in raw_df.columns:
+                    # Excel date-formatted cells come back as Timestamp objects, not
+                    # "YYYY-MM-DD" strings, which WorkEntry's date validation requires.
+                    raw_df["תאריך"] = pd.to_datetime(raw_df["תאריך"], errors="coerce").dt.strftime("%Y-%m-%d")
+                raw_df = raw_df.fillna("")
+                valid_rows, invalid_count = [], 0
+                for _, row in raw_df.iterrows():
+                    try:
+                        valid_rows.append(WorkEntry.from_dict(row.to_dict()).to_dict())
+                    except ValueError:
+                        invalid_count += 1
+                new_df = pd.DataFrame(valid_rows, columns=COLUMNS) if valid_rows else pd.DataFrame(columns=COLUMNS)
+                if invalid_count:
+                    flash(f"⚠️ {invalid_count} שורות לא תקינות דולגו (תאריך/סוג עבודה/לקוח חסר)", "warning")
                 existing_df = load_data_from_gsheet()
                 key_cols = ["שם לקוח", "תאריך", "עבודה", "שם חלקה"]
                 skipped = 0
@@ -668,7 +685,7 @@ def worker_change_password():
         flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
     else:
         _worker_password = new1
-        save_passwords_to_sheet(_current_password, _worker_password)
+        save_passwords_to_sheet(_current_password_hash, _worker_password)
         flash("הסיסמה שונתה בהצלחה ✅", "success")
     return redirect(url_for("worker_index"))
 
