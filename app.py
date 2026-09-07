@@ -815,6 +815,52 @@ def client_report():
                                operator_list=[], tool_list=[], error=str(e))
 
 
+@app.route("/client-report/billing")
+@login_required
+def client_billing_summary():
+    """A printable per-client billing summary, priced from the /profit rates.
+
+    Deliberately not called a "חשבונית" (invoice) — in Israel that word means
+    a legally regulated tax document, which this isn't. This is meant to feed
+    the numbers into the contractor's real invoicing/accounting system.
+    """
+    client_name = request.args.get("client", "").strip()
+    date_from   = request.args.get("date_from", "").strip()
+    date_to     = request.args.get("date_to", "").strip()
+    if not client_name:
+        return redirect(url_for("client_report"))
+    try:
+        df = load_data_from_gsheet()
+        cdf = df[df["שם לקוח"].str.contains(client_name, case=False, na=False)].copy()
+        if date_from:
+            cdf = cdf[cdf["תאריך"] >= date_from]
+        if date_to:
+            cdf = cdf[cdf["תאריך"] <= date_to]
+        cdf = cdf.sort_values("תאריך")
+
+        rates = load_rates_from_sheet()
+        cdf["_שעות"] = pd.to_numeric(cdf["שעות"], errors="coerce").fillna(0)
+        cdf["_rate"] = cdf["עבודה"].apply(lambda t: rates.get(t, {}).get("revenue", 0.0))
+        cdf["_total"] = cdf["_שעות"] * cdf["_rate"]
+
+        unrated_tasks = sorted(set(
+            cdf.loc[(cdf["_rate"] == 0) & (cdf["_שעות"] > 0), "עבודה"].dropna().unique()
+        ))
+        line_items = cdf.to_dict(orient="records")
+        grand_total = float(cdf["_total"].sum())
+        total_hours = float(cdf["_שעות"].sum())
+
+        return render_template(
+            "billing_summary.html",
+            client_name=client_name, date_from=date_from, date_to=date_to,
+            line_items=line_items, grand_total=grand_total, total_hours=total_hours,
+            unrated_tasks=unrated_tasks,
+            generated=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        )
+    except Exception as e:
+        return f"שגיאה בהפקת סיכום החיוב: {e}"
+
+
 @app.route("/field-report")
 @login_required
 def field_report():

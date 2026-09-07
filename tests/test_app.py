@@ -476,6 +476,62 @@ class TestProfitReport:
         assert "חלקה ג" in res.data.decode()
 
 
+class TestBillingSummary:
+
+    def _seed(self, mock_gsheet, rows):
+        mock_gsheet["df"] = pd.DataFrame(rows, columns=COLUMNS)
+
+    def test_billing_without_client_redirects(self, client):
+        res = client.get("/client-report/billing")
+        assert res.status_code == 302
+        assert "/client-report" in res.headers["Location"]
+
+    def test_billing_computes_line_totals_and_grand_total(self, client, mock_gsheet):
+        mock_gsheet["rates"]["חריש"] = {"revenue": 100.0, "cost": 0.0}
+        self._seed(mock_gsheet, [
+            WorkEntry(client="איתמר", date="2026-06-01", task="חריש",
+                      field_name="חלקה א", hours="4", entered_by="Web").to_dict(),
+            WorkEntry(client="איתמר", date="2026-06-03", task="חריש",
+                      field_name="חלקה ב", hours="2", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/client-report/billing?client=איתמר")
+        assert res.status_code == 200
+        html = res.data.decode()
+        assert "400" in html   # 4h * 100
+        assert "200" in html   # 2h * 100
+        assert "600" in html   # grand total
+
+    def test_billing_unrated_task_shows_warning_not_crash(self, client, mock_gsheet):
+        self._seed(mock_gsheet, [
+            WorkEntry(client="רוזה", date="2026-06-01", task="דיסוק",
+                      field_name="חלקה ג", hours="3", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/client-report/billing?client=רוזה")
+        assert res.status_code == 200
+        html = res.data.decode()
+        assert "דיסוק" in html
+        assert "לא הוגדר תעריף" in html
+
+    def test_billing_date_range_filters_rows(self, client, mock_gsheet):
+        mock_gsheet["rates"]["קציר"] = {"revenue": 50.0, "cost": 0.0}
+        self._seed(mock_gsheet, [
+            WorkEntry(client="יורי", date="2025-01-01", task="קציר",
+                      hours="2", entered_by="Web").to_dict(),
+            WorkEntry(client="יורי", date="2026-06-01", task="קציר",
+                      hours="2", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/client-report/billing?client=יורי&date_from=2026-01-01")
+        assert res.status_code == 200
+        html = res.data.decode()
+        assert "2025-01-01" not in html
+        assert "2026-06-01" in html
+
+    def test_billing_no_matching_client_shows_empty_message(self, client, mock_gsheet):
+        res = client.get("/client-report/billing?client=לא-קיים")
+        assert res.status_code == 200
+        assert "אין עבודות בטווח שנבחר" in res.data.decode()
+
+
 # ── WorkEntry date validation ──────────────────────────────────────────────────
 
 class TestWorkEntryDateValidation:
