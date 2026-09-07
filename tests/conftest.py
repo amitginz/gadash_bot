@@ -14,12 +14,21 @@ import pytest
 import app as app_module
 import gadash.service as service_module
 import gadash.sheets as sheets_module
-from gadash.models import COLUMNS
+from gadash.models import COLUMNS, VALID_TASKS
 
 
 @pytest.fixture(autouse=True)
 def mock_gsheet(monkeypatch):
-    state = {"df": pd.DataFrame(columns=COLUMNS)}
+    state = {
+        "df": pd.DataFrame(columns=COLUMNS),
+        "rates": {t: {"revenue": 0.0, "cost": 0.0} for t in VALID_TASKS},
+    }
+
+    def fake_load_rates():
+        return {t: dict(v) for t, v in state["rates"].items()}
+
+    def fake_save_rates(rates):
+        state["rates"] = {t: dict(v) for t, v in rates.items()}
 
     def fake_load(force_refresh: bool = False):
         return state["df"].copy()
@@ -60,6 +69,8 @@ def mock_gsheet(monkeypatch):
         "load_pins_from_sheet":     lambda: [],
         "save_pin_to_sheet":        lambda uid, name, color, lat, lng: None,
         "delete_pin_from_sheet":    lambda uid: None,
+        "load_rates_from_sheet":    fake_load_rates,
+        "save_rates_to_sheet":      fake_save_rates,
         "load_passwords_from_sheet": lambda: {},
         "save_passwords_to_sheet":  lambda web, worker: None,
         "_invalidate_cache":        lambda: None,

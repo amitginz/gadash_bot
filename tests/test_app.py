@@ -413,6 +413,69 @@ class TestSheetMutations:
         assert res1.get_json()["updated_at"] == res2.get_json()["updated_at"]
 
 
+class TestProfitReport:
+
+    def _seed(self, mock_gsheet, rows):
+        mock_gsheet["df"] = pd.DataFrame(rows, columns=COLUMNS)
+
+    def test_profit_empty_shows_zero_state(self, client):
+        res = client.get("/profit")
+        assert res.status_code == 200
+        assert "אין נתונים להצגה".encode() in res.data
+
+    def test_profit_saving_rates_round_trips(self, client, mock_gsheet):
+        res = client.post("/profit", data={
+            "revenue_חריש": "120", "cost_חריש": "40",
+            "revenue_ריסוס": "150", "cost_ריסוס": "60",
+            "revenue_קציר": "0", "cost_קציר": "0",
+            "revenue_דיסוק": "0", "cost_דיסוק": "0",
+            "revenue_אחר": "0", "cost_אחר": "0",
+        }, headers=CSRF_HEADER)
+        assert res.status_code == 302
+        assert mock_gsheet["rates"]["חריש"] == {"revenue": 120.0, "cost": 40.0}
+        assert mock_gsheet["rates"]["ריסוס"] == {"revenue": 150.0, "cost": 60.0}
+
+    def test_profit_computes_revenue_cost_and_margin_per_field(self, client, mock_gsheet):
+        mock_gsheet["rates"]["חריש"] = {"revenue": 100.0, "cost": 30.0}
+        mock_gsheet["rates"]["ריסוס"] = {"revenue": 80.0, "cost": 20.0}
+        self._seed(mock_gsheet, [
+            WorkEntry(client="איתמר", date="2026-06-01", task="חריש",
+                      field_name="חלקה א", hours="10", entered_by="Web").to_dict(),
+            WorkEntry(client="מאי", date="2026-06-02", task="ריסוס",
+                      field_name="חלקה ב", hours="5", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/profit")
+        assert res.status_code == 200
+        html = res.data.decode()
+        # חלקה א: 10h * (100-30) = 700 profit, 70% margin
+        assert "חלקה א" in html
+        assert "700" in html
+        # חלקה ב: 5h * (80-20) = 300 profit
+        assert "חלקה ב" in html
+        assert "300" in html
+
+    def test_profit_date_filter_excludes_out_of_range_rows(self, client, mock_gsheet):
+        mock_gsheet["rates"]["חריש"] = {"revenue": 100.0, "cost": 0.0}
+        self._seed(mock_gsheet, [
+            WorkEntry(client="איתמר", date="2026-01-01", task="חריש",
+                      field_name="חלקה ישנה", hours="10", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/profit?date_from=2026-06-01")
+        assert res.status_code == 200
+        assert "חלקה ישנה" not in res.data.decode()
+
+    def test_profit_unrated_task_contributes_zero(self, client, mock_gsheet):
+        # A task with no configured rate must not crash the report — it just
+        # contributes zero revenue/cost, same as a freshly-created sheet.
+        self._seed(mock_gsheet, [
+            WorkEntry(client="רוזה", date="2026-06-01", task="דיסוק",
+                      field_name="חלקה ג", hours="8", entered_by="Web").to_dict(),
+        ])
+        res = client.get("/profit")
+        assert res.status_code == 200
+        assert "חלקה ג" in res.data.decode()
+
+
 # ── WorkEntry date validation ──────────────────────────────────────────────────
 
 class TestWorkEntryDateValidation:

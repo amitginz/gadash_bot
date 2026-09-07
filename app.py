@@ -40,9 +40,9 @@ from gadash.sheets import (
     calculate_polygon_dunam_area, delete_polygon_from_sheet, delete_pin_from_sheet,
     delete_row_in_gsheet, edit_row_in_gsheet,
     load_data_from_gsheet, load_passwords_from_sheet, load_pins_from_sheet,
-    load_polygons_from_sheet,
+    load_polygons_from_sheet, load_rates_from_sheet,
     patch_cell_in_gsheet, save_data_to_gsheet, save_pin_to_sheet,
-    save_polygon_to_sheet, save_passwords_to_sheet,
+    save_polygon_to_sheet, save_passwords_to_sheet, save_rates_to_sheet,
 )
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
@@ -879,6 +879,71 @@ def field_report():
                                date_from="", date_to="", client_filter="",
                                client_list=[], field_list=[], crop_list=[],
                                error=str(e))
+
+
+@app.route("/profit", methods=["GET", "POST"])
+@login_required
+def profit():
+    if request.method == "POST":
+        rates = {}
+        for task in VALID_TASKS:
+            try:
+                revenue = float(request.form.get(f"revenue_{task}", "") or 0)
+            except ValueError:
+                revenue = 0.0
+            try:
+                cost = float(request.form.get(f"cost_{task}", "") or 0)
+            except ValueError:
+                cost = 0.0
+            rates[task] = {"revenue": revenue, "cost": cost}
+        save_rates_to_sheet(rates)
+        flash("התעריפים נשמרו בהצלחה ✅", "success")
+        return redirect(url_for("profit"))
+
+    rates     = load_rates_from_sheet()
+    date_from = request.args.get("date_from", "").strip()
+    date_to   = request.args.get("date_to", "").strip()
+    try:
+        df = load_data_from_gsheet()
+        if date_from:
+            df = df[df["תאריך"] >= date_from]
+        if date_to:
+            df = df[df["תאריך"] <= date_to]
+
+        if df.empty:
+            return render_template("profit.html", rates=rates, rows=[], totals=None,
+                                    date_from=date_from, date_to=date_to)
+
+        df = df.copy()
+        df["_שעות"]   = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
+        df["_revenue"] = df.apply(lambda r: r["_שעות"] * rates.get(r["עבודה"], {}).get("revenue", 0), axis=1)
+        df["_cost"]    = df.apply(lambda r: r["_שעות"] * rates.get(r["עבודה"], {}).get("cost", 0), axis=1)
+        df["_profit"]  = df["_revenue"] - df["_cost"]
+        df["שם חלקה"]  = df["שם חלקה"].fillna("").str.strip().replace("", "לא צוין")
+
+        grouped = (
+            df.groupby("שם חלקה")
+            .agg(hours=("_שעות", "sum"), revenue=("_revenue", "sum"),
+                 cost=("_cost", "sum"), profit=("_profit", "sum"), jobs=("עבודה", "count"))
+            .reset_index().rename(columns={"שם חלקה": "field"})
+        )
+        grouped["margin"] = grouped.apply(
+            lambda r: round(r["profit"] / r["revenue"] * 100, 1) if r["revenue"] > 0 else 0.0, axis=1
+        )
+        grouped = grouped.sort_values("profit", ascending=False).round(2)
+        rows = grouped.to_dict(orient="records")
+
+        totals = {
+            "hours":   round(float(df["_שעות"].sum()), 1),
+            "revenue": round(float(df["_revenue"].sum()), 2),
+            "cost":    round(float(df["_cost"].sum()), 2),
+            "profit":  round(float(df["_profit"].sum()), 2),
+        }
+        return render_template("profit.html", rates=rates, rows=rows, totals=totals,
+                                date_from=date_from, date_to=date_to)
+    except Exception as e:
+        return render_template("profit.html", rates=rates, rows=[], totals=None,
+                                date_from=date_from, date_to=date_to, error=str(e))
 
 
 @app.route("/field-report/print")

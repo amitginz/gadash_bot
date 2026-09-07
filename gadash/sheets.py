@@ -9,7 +9,7 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 
-from gadash.models import COLUMNS, _N_COLS, WorkEntry
+from gadash.models import COLUMNS, VALID_TASKS, _N_COLS, WorkEntry
 
 _logger = logging.getLogger(__name__)
 
@@ -304,6 +304,62 @@ def _get_workers_sheet():
         except Exception:
             _gs_client = None
             return None
+
+
+def _get_rates_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Rates")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Rates", rows=20, cols=3)
+                ws.append_row(["עבודה", "מחיר ללקוח (לשעה)", "עלות תפעולית (לשעה)"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def load_rates_from_sheet() -> dict:
+    """Per-task hourly rates for the profitability report — {task: {"revenue": x, "cost": y}}.
+
+    Any task without a saved row (including on first-ever use) defaults to
+    zero on both sides, so profit math never crashes on missing rates.
+    """
+    rates = {t: {"revenue": 0.0, "cost": 0.0} for t in VALID_TASKS}
+    try:
+        ws = _get_rates_sheet()
+        if not ws:
+            return rates
+        rows = ws.get_all_values()
+        for row in rows[1:]:
+            if len(row) >= 3 and row[0] in rates:
+                try:
+                    rates[row[0]] = {"revenue": float(row[1] or 0), "cost": float(row[2] or 0)}
+                except ValueError:
+                    pass
+        return rates
+    except Exception as e:
+        _logger.error("[Rates] load error: %s", e)
+        return rates
+
+
+def save_rates_to_sheet(rates: dict):
+    try:
+        ws = _get_rates_sheet()
+        if not ws:
+            return
+        rows = [["עבודה", "מחיר ללקוח (לשעה)", "עלות תפעולית (לשעה)"]]
+        for task in VALID_TASKS:
+            r = rates.get(task, {"revenue": 0.0, "cost": 0.0})
+            rows.append([task, r["revenue"], r["cost"]])
+        ws.clear()
+        ws.append_rows(rows, value_input_option="USER_ENTERED")
+    except Exception as e:
+        _logger.error("[Rates] save error: %s", e)
 
 
 def _load_field_coords() -> dict:
