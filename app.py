@@ -35,12 +35,14 @@ from gadash.bot import start_telegram_bot
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.service import create_entry
 from gadash.sheets import (
-    _invalidate_cache, _load_field_coords, _save_field_coord,
+    _invalidate_cache, _delete_field_coord, _load_field_coords,
     append_row_to_gsheet, bulk_delete_rows_in_gsheet,
+    calculate_polygon_dunam_area, delete_polygon_from_sheet, delete_pin_from_sheet,
     delete_row_in_gsheet, edit_row_in_gsheet,
-    load_data_from_gsheet, load_passwords_from_sheet,
-    patch_cell_in_gsheet, save_data_to_gsheet,
-    save_passwords_to_sheet,
+    load_data_from_gsheet, load_passwords_from_sheet, load_pins_from_sheet,
+    load_polygons_from_sheet,
+    patch_cell_in_gsheet, save_data_to_gsheet, save_pin_to_sheet,
+    save_polygon_to_sheet, save_passwords_to_sheet,
 )
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
@@ -1020,33 +1022,110 @@ def fields_map():
     return render_template("fields_map.html")
 
 
-@app.route("/api/fields")
+@app.route("/api/fields", methods=["GET", "POST"])
 @login_required
 def api_fields():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        uid   = data.get("uid")
+        name  = data.get("name")
+        color = data.get("color", "")
+        type_ = data.get("type")  # 'polygon' or 'pin'
+
+        if not uid or not name or not type_:
+            return jsonify({"error": "missing uid, name, or type"}), 400
+        try:
+            if type_ == "polygon":
+                coords = data.get("coordinates")
+                if not coords:
+                    return jsonify({"error": "missing coordinates"}), 400
+                save_polygon_to_sheet(uid, name, color, coords)
+                delete_pin_from_sheet(uid)
+                _log_audit("save-polygon", "Web", f"field: {name}")
+                return jsonify({"ok": True, "uid": uid, "area_dunam": calculate_polygon_dunam_area(coords)})
+            elif type_ == "pin":
+                lat = data.get("lat")
+                lng = data.get("lng")
+                if lat is None or lng is None:
+                    return jsonify({"error": "missing lat/lng"}), 400
+                save_pin_to_sheet(uid, name, color, float(lat), float(lng))
+                delete_polygon_from_sheet(uid)
+                _log_audit("save-pin", "Web", f"field: {name}")
+                return jsonify({"ok": True, "uid": uid})
+            else:
+                return jsonify({"error": "invalid type"}), 400
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # GET — merge job stats with saved polygons/pins for the map
     try:
         df = load_data_from_gsheet()
-        coords = _load_field_coords()
-        if df.empty:
-            return jsonify([])
+        polys = {p["uid"]: p for p in load_polygons_from_sheet()}
+        pins = {p["uid"]: p for p in load_pins_from_sheet()}
 
-        df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
-        df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
-        df = df[df["שם חלקה"] != ""]
+        # Pins saved before the Polygons/Pins sheets existed live in the older
+        # single-point "FieldCoords" sheet. Fold them in here (matched by name,
+        # since they predate uids) so nobody's saved map pins disappear; the
+        # next drag/save of one of these persists it into the Pins sheet.
+        pin_names = {p["name"] for p in pins.values()}
+        for legacy_name, coord in _load_field_coords().items():
+            if legacy_name not in pin_names:
+                pins[f"legacy:{legacy_name}"] = {
+                    "uid": f"legacy:{legacy_name}", "name": legacy_name, "color": "",
+                    "lat": coord["lat"], "lng": coord["lng"],
+                }
+
+        if not df.empty:
+            df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
+            df["שם חלקה"] = df["שם חלקה"].fillna("").str.strip()
+            df = df[df["שם חלקה"] != ""]
 
         result = []
-        for field_name, grp in df.groupby("שם חלקה"):
-            crops   = grp["גידול"].dropna().replace("", None).dropna()
-            clients = grp["שם לקוח"].dropna()
-            dates   = grp["תאריך"].dropna()
+        processed_names = set()
+
+        if not df.empty:
+            for field_name, grp in df.groupby("שם חלקה"):
+                processed_names.add(field_name)
+                poly = polys.get(field_name) or next((p for p in polys.values() if p["name"] == field_name), None)
+                pin  = pins.get(field_name)  or next((p for p in pins.values()  if p["name"] == field_name), None)
+
+                crops   = grp["גידול"].dropna().replace("", None).dropna()
+                clients = grp["שם לקוח"].dropna()
+                dates   = grp["תאריך"].dropna()
+
+                result.append({
+                    "uid":        (poly or pin or {}).get("uid"),
+                    "name":       field_name,
+                    "color":      (poly or pin or {}).get("color", ""),
+                    "hours":      round(float(grp["_שעות"].sum()), 1),
+                    "jobs":       int(len(grp)),
+                    "crop":       crops.mode().iloc[0] if not crops.empty else "",
+                    "client":     clients.mode().iloc[0] if not clients.empty else "",
+                    "last_date":  dates.max() if not dates.empty else "",
+                    "lat":        pin["lat"] if pin else None,
+                    "lng":        pin["lng"] if pin else None,
+                    "polygon":    poly["coordinates"] if poly else None,
+                    "area_dunam": calculate_polygon_dunam_area(poly["coordinates"]) if poly else 0.0,
+                })
+
+        # Fields/points with a saved pin or polygon but no job history yet
+        all_names = {p["name"] for p in polys.values()} | {p["name"] for p in pins.values()}
+        for field_name in all_names - processed_names:
+            poly = next((p for p in polys.values() if p["name"] == field_name), None)
+            pin  = next((p for p in pins.values()  if p["name"] == field_name), None)
             result.append({
-                "name":      field_name,
-                "hours":     round(float(grp["_שעות"].sum()), 1),
-                "jobs":      int(len(grp)),
-                "crop":      crops.mode().iloc[0] if not crops.empty else "",
-                "client":    clients.mode().iloc[0] if not clients.empty else "",
-                "last_date": dates.max() if not dates.empty else "",
-                "lat":       coords[field_name]["lat"] if field_name in coords else None,
-                "lng":       coords[field_name]["lng"] if field_name in coords else None,
+                "uid":        (poly or pin or {}).get("uid"),
+                "name":       field_name,
+                "color":      (poly or pin or {}).get("color", ""),
+                "hours":      0.0,
+                "jobs":       0,
+                "crop":       "",
+                "client":     "",
+                "last_date":  "",
+                "lat":        pin["lat"] if pin else None,
+                "lng":        pin["lng"] if pin else None,
+                "polygon":    poly["coordinates"] if poly else None,
+                "area_dunam": calculate_polygon_dunam_area(poly["coordinates"]) if poly else 0.0,
             })
 
         result.sort(key=lambda x: x["hours"], reverse=True)
@@ -1055,14 +1134,17 @@ def api_fields():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/fields/coords", methods=["POST"])
+@app.route("/api/fields/<uid>", methods=["DELETE"])
 @login_required
-def api_fields_coords():
-    data = request.get_json(silent=True)
-    if not data or "name" not in data or "lat" not in data or "lng" not in data:
-        return jsonify({"error": "missing fields"}), 400
+def api_fields_delete(uid):
+    """Delete a field's saved polygon or pin by UID (job history is untouched)."""
     try:
-        _save_field_coord(str(data["name"]), float(data["lat"]), float(data["lng"]))
+        if uid.startswith("legacy:"):
+            _delete_field_coord(uid[len("legacy:"):])
+        else:
+            delete_polygon_from_sheet(uid)
+            delete_pin_from_sheet(uid)
+        _log_audit("delete-field", "Web", f"uid: {uid}")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500

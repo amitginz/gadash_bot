@@ -287,6 +287,57 @@ class TestFlaskRoutes:
         assert res.status_code == 200
         assert res.is_json
 
+    def test_api_fields_save_pin(self, client, monkeypatch):
+        saved = {}
+        monkeypatch.setattr("app.save_pin_to_sheet", lambda uid, name, color, lat, lng: saved.update(
+            uid=uid, name=name, color=color, lat=lat, lng=lng))
+        res = client.post("/api/fields", json={
+            "uid": "u1", "name": "חלקה א", "type": "pin", "lat": 32.1, "lng": 35.1,
+        }, headers=CSRF_HEADER)
+        assert res.status_code == 200
+        assert res.get_json()["ok"] is True
+        assert saved == {"uid": "u1", "name": "חלקה א", "color": "", "lat": 32.1, "lng": 35.1}
+
+    def test_api_fields_save_polygon_returns_area(self, client):
+        # Roughly a 1km x 1km square near the equator's latitude scale → ~1000 dunam.
+        coords = [[0.0, 0.0], [0.009, 0.0], [0.009, 0.009], [0.0, 0.009]]
+        res = client.post("/api/fields", json={
+            "uid": "u2", "name": "שטח", "type": "polygon", "coordinates": coords,
+        }, headers=CSRF_HEADER)
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ok"] is True
+        assert data["area_dunam"] > 0
+
+    def test_api_fields_save_missing_type_400(self, client):
+        res = client.post("/api/fields", json={"uid": "u3", "name": "x"}, headers=CSRF_HEADER)
+        assert res.status_code == 400
+
+    def test_api_fields_delete_by_uid(self, client, monkeypatch):
+        deleted = []
+        monkeypatch.setattr("app.delete_polygon_from_sheet", lambda uid: deleted.append(("poly", uid)))
+        monkeypatch.setattr("app.delete_pin_from_sheet", lambda uid: deleted.append(("pin", uid)))
+        res = client.delete("/api/fields/u1", headers=CSRF_HEADER)
+        assert res.status_code == 200
+        assert ("poly", "u1") in deleted and ("pin", "u1") in deleted
+
+    def test_api_fields_delete_legacy_uid_hits_field_coords(self, client, monkeypatch):
+        deleted = []
+        monkeypatch.setattr("app._delete_field_coord", lambda name: deleted.append(name))
+        res = client.delete("/api/fields/legacy:חלקה ישנה", headers=CSRF_HEADER)
+        assert res.status_code == 200
+        assert deleted == ["חלקה ישנה"]
+
+    def test_api_fields_migrates_legacy_coords(self, client, monkeypatch):
+        # A pin saved via the pre-Polygons/Pins-sheets "FieldCoords" mechanism
+        # must still show up on the map, tagged with a legacy: uid.
+        monkeypatch.setattr("app._load_field_coords", lambda: {"חלקה ישנה": {"lat": 32.0, "lng": 35.0}})
+        res = client.get("/api/fields")
+        data = res.get_json()
+        legacy = next(f for f in data if f["name"] == "חלקה ישנה")
+        assert legacy["uid"] == "legacy:חלקה ישנה"
+        assert legacy["lat"] == 32.0 and legacy["lng"] == 35.0
+
 
 # ── Sheet mutation routes (row_id addressing) ──────────────────────────────────
 # Regression coverage for two bugs found & fixed while auditing this project:

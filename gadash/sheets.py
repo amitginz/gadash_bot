@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -95,6 +96,165 @@ def _get_fieldcoords_sheet():
             return None
 
 
+def _get_polygons_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Polygons")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Polygons", rows=200, cols=4)
+                ws.append_row(["UID", "Name", "Color", "Coordinates"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def _get_pins_sheet():
+    global _gs_client
+    with _gs_lock:
+        try:
+            _init_gs_client()
+            wb = _gs_client.open("Gadash Data")
+            try:
+                return wb.worksheet("Pins")
+            except gspread.WorksheetNotFound:
+                ws = wb.add_worksheet("Pins", rows=200, cols=4)
+                ws.append_row(["UID", "Name", "Color", "Coordinates"])
+                return ws
+        except Exception:
+            _gs_client = None
+            return None
+
+
+def calculate_polygon_dunam_area(coords: list) -> float:
+    """Area of a lat/lng polygon in Dunams (1 Dunam = 1000 sq meters).
+
+    Uses an equirectangular projection centered on the polygon's average
+    latitude — accurate enough for single-field-sized areas, no geo library
+    dependency needed.
+    """
+    if not coords or len(coords) < 3:
+        return 0.0
+    lats = [c[0] for c in coords]
+    lons = [c[1] for c in coords]
+    avg_lat = sum(lats) / len(lats)
+    lat_meters = 111000.0
+    lon_meters = 111000.0 * math.cos(math.radians(avg_lat))
+    x = [lon * lon_meters for lon in lons]
+    y = [lat * lat_meters for lat in lats]
+    area_sq_m = 0.5 * abs(sum(x[i] * y[i - 1] - x[i - 1] * y[i] for i in range(len(coords))))
+    return round(area_sq_m / 1000.0, 2)
+
+
+def load_polygons_from_sheet() -> list:
+    try:
+        ws = _get_polygons_sheet()
+        if not ws:
+            return []
+        rows = ws.get_all_values()
+        polys = []
+        for row in rows[1:]:
+            if len(row) >= 4 and row[0]:
+                try:
+                    polys.append({
+                        "uid": row[0], "name": row[1], "color": row[2],
+                        "coordinates": json.loads(row[3]),
+                    })
+                except Exception:
+                    pass
+        return polys
+    except Exception as e:
+        _logger.error("[Polygons] load error: %s", e)
+        return []
+
+
+def save_polygon_to_sheet(uid: str, name: str, color: str, coords: list):
+    try:
+        ws = _get_polygons_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        coords_str = json.dumps(coords)
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.update([[uid, name, color, coords_str]], f"A{i}:D{i}")
+                return
+        ws.append_row([uid, name, color, coords_str])
+    except Exception as e:
+        _logger.error("[Polygons] save error: %s", e)
+
+
+def delete_polygon_from_sheet(uid: str):
+    try:
+        ws = _get_polygons_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.delete_rows(i)
+                return
+    except Exception as e:
+        _logger.error("[Polygons] delete error: %s", e)
+
+
+def load_pins_from_sheet() -> list:
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return []
+        rows = ws.get_all_values()
+        pins = []
+        for row in rows[1:]:
+            if len(row) >= 4 and row[0]:
+                try:
+                    lat, lng = json.loads(row[3])
+                    pins.append({
+                        "uid": row[0], "name": row[1], "color": row[2],
+                        "lat": lat, "lng": lng,
+                    })
+                except Exception:
+                    pass
+        return pins
+    except Exception as e:
+        _logger.error("[Pins] load error: %s", e)
+        return []
+
+
+def save_pin_to_sheet(uid: str, name: str, color: str, lat: float, lng: float):
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        coords_str = json.dumps([lat, lng])
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.update([[uid, name, color, coords_str]], f"A{i}:D{i}")
+                return
+        ws.append_row([uid, name, color, coords_str])
+    except Exception as e:
+        _logger.error("[Pins] save error: %s", e)
+
+
+def delete_pin_from_sheet(uid: str):
+    try:
+        ws = _get_pins_sheet()
+        if not ws:
+            return
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows[1:], start=2):
+            if row and row[0] == uid:
+                ws.delete_rows(i)
+                return
+    except Exception as e:
+        _logger.error("[Pins] delete error: %s", e)
+
+
 def _get_audit_sheet():
     global _gs_client
     with _gs_lock:
@@ -171,8 +331,13 @@ def _load_field_coords() -> dict:
         return {}
 
 
-def _save_field_coord(name: str, lat: float, lng: float):
-    global _coords_cache, _coords_cache_time
+# _save_field_coord was removed — pin/polygon saves now go through
+# save_pin_to_sheet/save_polygon_to_sheet below. _load_field_coords is kept
+# read-only, as a one-time migration source for pins placed before that switch
+# (see api_fields() in app.py). _delete_field_coord lets a delete of one of
+# those legacy pins actually remove it, instead of it reappearing on reload.
+def _delete_field_coord(name: str):
+    global _coords_cache
     try:
         ws = _get_fieldcoords_sheet()
         if not ws:
@@ -180,17 +345,13 @@ def _save_field_coord(name: str, lat: float, lng: float):
         rows = ws.get_all_values()
         for i, row in enumerate(rows[1:], start=2):
             if row and row[0] == name:
-                ws.update([[name, lat, lng]], f"A{i}:C{i}")
+                ws.delete_rows(i)
                 break
-        else:
-            ws.append_row([name, lat, lng])
-        # Update in-memory cache immediately so next read is instant
         with _gs_lock:
             if _coords_cache is not None:
-                _coords_cache[name] = {"lat": lat, "lng": lng}
-                _coords_cache_time = time.time()
+                _coords_cache.pop(name, None)
     except Exception as e:
-        _logger.error("[FieldCoords] save error: %s", e)
+        _logger.error("[FieldCoords] delete error: %s", e)
 
 
 def load_passwords_from_sheet() -> dict:

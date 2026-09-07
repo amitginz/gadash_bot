@@ -5,6 +5,7 @@
 {% block extra_head %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
 {% endblock %}
 
 {% block extra_style %}
@@ -37,6 +38,10 @@
     display: inline-block; font-size: .72rem; font-weight: 700; border-radius: 6px;
     padding: .15rem .5rem; color: #fff; margin-bottom: .25rem;
   }
+  .badge-polygon {
+    display: inline-block; font-size: .68rem; font-weight: 600; border-radius: 6px;
+    padding: .1rem .4rem; background: #e0e7ff; color: #3730a3; margin-left: .3rem;
+  }
   .btn-place {
     font-size: .72rem; padding: .2rem .55rem; margin-top: .4rem; border-radius: 6px;
     border: none; cursor: pointer; color: #fff; background: #0d6efd;
@@ -50,6 +55,7 @@
   }
   .legend { display: flex; gap: .6rem; align-items: center; font-size: .78rem; color: #555; margin-right: auto; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .legend-poly { width: 14px; height: 10px; border: 1px solid #3730a3; background: rgba(99,102,241,0.4); display: inline-block; border-radius: 2px; }
 
   .placing-hint {
     display: none; background: #0d6efd; color: #fff;
@@ -66,29 +72,120 @@
   .leaflet-control-geosearch form input { font-size: .9rem; width: 240px; }
   .leaflet-control-geosearch .results { direction: ltr; }
   .leaflet-control-geosearch a.reset { line-height: 30px; }
+
+  .drawing-action-bar {
+    display: none;
+    position: absolute;
+    top: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: #ffffff;
+    border: 2px solid #3730a3;
+    border-radius: 30px;
+    padding: .45rem 1.2rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+    direction: rtl;
+    align-items: center;
+    gap: .6rem;
+    font-size: .88rem;
+  }
+  .drawing-action-bar.show { display: flex; }
 {% endblock %}
 
 {% block content %}
 
+<!-- SVG Patterns for Polygons -->
+<svg width="0" height="0" style="position:absolute; z-index:-1;">
+  <defs>
+    <pattern id="poly-stripes" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="12" stroke="#ffffff" stroke-width="5" stroke-opacity="0.35" />
+    </pattern>
+  </defs>
+</svg>
+
 <!-- Hero -->
 <div class="hero">
-  <h1><i class="bi bi-geo-alt-fill me-2"></i>מפת שדות</h1>
-  <p class="mb-0 opacity-75" style="font-size:.9rem">לחץ על שם חלקה בפאנל → לחץ על המפה לסימון מיקום</p>
+  <h1><i class="bi bi-geo-alt-fill me-2"></i>מפת שדות ונקודות מיקום</h1>
+  <p class="mb-0 opacity-75" style="font-size:.9rem">לחץ על שם חלקה בפאנל לסימון/הזזה, או הוסף נקודת מיקום חדשה עבור עבודה לא מוגדרת</p>
 </div>
 
 <!-- Toolbar -->
 <div class="map-toolbar">
-  <div class="legend">
+  <button class="btn btn-sm btn-primary" onclick="promptAddCustomPin()">
+    <i class="bi bi-geo-fill me-1"></i>📍 הוסף נקודת מיקום (Point Pin)
+  </button>
+
+  <button class="btn btn-sm btn-outline-secondary" onclick="exportFieldsCSV()">
+    <i class="bi bi-download me-1"></i>ייצוא
+  </button>
+  <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('importFile').click()">
+    <i class="bi bi-upload me-1"></i>ייבוא
+  </button>
+  <input type="file" id="importFile" accept=".csv" style="display:none" onchange="importFieldsCSV(event)">
+
+  <div class="legend ms-auto">
     <span class="legend-dot" style="background:#dc3545"></span> &gt;50 ש׳
     <span class="legend-dot" style="background:#fd7e14"></span> 10–50 ש׳
     <span class="legend-dot" style="background:#198754"></span> &lt;10 ש׳
+    <span class="legend-poly me-1"></span> גבולות חלקה (Polygon)
     <span class="legend-dot" style="background:#adb5bd"></span> לא מוגדר
   </div>
-  <span class="placing-hint" id="placingHint">📍 לחץ על המפה למיקום השדה</span>
+  <span class="placing-hint" id="placingHint">📍 לחץ על המפה לקביעת מיקום הנקודה</span>
+</div>
+
+<!-- Filters Toolbar -->
+<div class="d-flex align-items-center gap-3 px-4 py-2 bg-white border-bottom shadow-sm mb-2 flex-wrap" style="font-size: .85rem;">
+  <span class="fw-bold text-muted"><i class="bi bi-funnel-fill me-1"></i> סינון:</span>
+
+  <div class="d-flex align-items-center gap-1">
+    <label>שם:</label>
+    <input type="text" id="filterName" class="form-control form-control-sm" style="width: 100px" placeholder="חיפוש..." oninput="applyFilters()">
+  </div>
+
+  <div class="d-flex align-items-center gap-1">
+    <label>שטח (דונם):</label>
+    <input type="number" id="filterAreaMin" class="form-control form-control-sm" style="width: 60px" placeholder="מ-" oninput="applyFilters()">
+    <span>-</span>
+    <input type="number" id="filterAreaMax" class="form-control form-control-sm" style="width: 60px" placeholder="עד" oninput="applyFilters()">
+  </div>
+
+  <div class="d-flex align-items-center gap-1">
+    <label>שעות:</label>
+    <input type="number" id="filterHoursMin" class="form-control form-control-sm" style="width: 60px" placeholder="מ-" oninput="applyFilters()">
+    <span>-</span>
+    <input type="number" id="filterHoursMax" class="form-control form-control-sm" style="width: 60px" placeholder="עד" oninput="applyFilters()">
+  </div>
+
+  <div class="d-flex align-items-center gap-1">
+    <label>עבודות:</label>
+    <input type="number" id="filterJobsMin" class="form-control form-control-sm" style="width: 60px" placeholder="מ-" oninput="applyFilters()">
+    <span>-</span>
+    <input type="number" id="filterJobsMax" class="form-control form-control-sm" style="width: 60px" placeholder="עד" oninput="applyFilters()">
+  </div>
+
+  <div class="ms-auto">
+    <button class="btn btn-sm btn-light text-danger" onclick="clearFilters()">נקה סינונים</button>
+  </div>
 </div>
 
 <!-- Map + Panel -->
-<div class="map-wrap">
+<div class="map-wrap" style="position: relative;">
+
+  <!-- Floating Drawing Action Bar -->
+  <div id="drawingActionBar" class="drawing-action-bar shadow-sm">
+    <span class="fw-bold"><i class="bi bi-pentagon-fill me-1" style="color:#3730a3"></i>📐 הגדרת שטח עבור: <strong id="drawingFieldName">--</strong></span>
+    <span id="drawingVertexCount" class="badge bg-primary rounded-pill px-2 py-1">0/12 קודקודים</span>
+    <button id="btnFinishDraw" class="btn btn-sm btn-success rounded-pill px-3" onclick="finishPolygonDraw()" disabled>
+      ✅ סיום ושמירה
+    </button>
+    <button id="btnUndoVertex" class="btn btn-sm btn-outline-warning text-dark rounded-pill px-3" onclick="undoPolygonVertex()">
+      ↩️ ביטול נקודה
+    </button>
+    <button id="btnCancelDraw" class="btn btn-sm btn-outline-danger rounded-pill px-3" onclick="cancelPolygonDraw()">
+      ❌ ביטול
+    </button>
+  </div>
 
   <!-- Side panel -->
   <div class="side-panel" id="sidePanel">
@@ -105,14 +202,20 @@
 
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet-geosearch@3.11.1/dist/geosearch.umd.js"></script>
 <script>
 const CSRF = document.querySelector('meta[name="csrf-token"]').content;
 
+// Helper to generate a unique ID
+function generateUID() {
+  return Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+}
+
 // ── Map init ──────────────────────────────────────────────────────────────────
 const map = L.map("map", { zoomControl: true }).setView([31.5, 34.85], 9);
 
-// ESRI World Imagery — satellite, free, no API key, global CDN, great for agricultural fields
+// ESRI World Imagery — satellite
 const satellite = L.tileLayer(
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
   { attribution: "© Esri, Maxar, Earthstar Geographics", maxZoom: 18 }
@@ -144,7 +247,8 @@ map.addControl(searchControl);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let fields       = [];
-let markers      = {};      // fieldName → L.circleMarker
+let markers      = {};      // uid → L.circleMarker
+let polygons     = {};      // uid → L.featureGroup
 let placingField = null;    // name of field being placed
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -169,90 +273,339 @@ function formatDate(d) {
   return `${day}/${m}/${y}`;
 }
 
-// ── Draw / update marker ──────────────────────────────────────────────────────
+function fieldByUid(uid) {
+  return fields.find(f => f.uid === uid);
+}
+
+// ── Draw / update marker & polygon ───────────────────────────────────────────
 function addMarker(field) {
-  if (field.lat == null || field.lng == null) return;
-  const color  = hourColor(field.hours);
-  const radius = hourRadius(field.hours);
+  const color = hourColor(field.hours);
+  const polyColor = field.color || color;
 
-  const m = L.circleMarker([field.lat, field.lng], {
-    radius, color: "#fff", weight: 2,
-    fillColor: color, fillOpacity: 0.88,
-  }).addTo(map);
+  // 1. Draw Polygon Boundary if present
+  if (field.polygon && field.polygon.length) {
+    if (polygons[field.uid]) polygons[field.uid].remove();
 
-  m.bindPopup(`
-    <div class="popup-title">📍 ${esc(field.name)}</div>
-    <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
-    <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
-    ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${esc(field.crop)}</span></div>` : ""}
-    ${field.client ? `<div class="popup-row">👤 לקוח מוביל: <span>${esc(field.client)}</span></div>` : ""}
-    ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${esc(formatDate(field.last_date))}</span></div>` : ""}
-    <div style="margin-top:.5rem;font-size:.72rem;color:#888">גרור לשינוי מיקום</div>
-  `);
+    const polyGroup = L.featureGroup().addTo(map);
+    const poly = L.polygon(field.polygon, {
+      color: polyColor,
+      fillColor: polyColor,
+      fillOpacity: 0.35,
+      weight: 2.5
+    }).addTo(polyGroup);
 
-  m.on("click", () => highlightCard(field.name));
+    // Add pattern overlay
+    L.polygon(field.polygon, {
+      color: 'transparent',
+      fillColor: 'url(#poly-stripes)',
+      fillOpacity: 1,
+      weight: 0,
+      interactive: false
+    }).addTo(polyGroup);
 
-  // Allow dragging to reposition
-  m.options.interactive = true;
-  m._dragging = false;
-  let dragStart = null;
-
-  m.on("mousedown", function(e) {
-    dragStart = e.latlng;
-    map.dragging.disable();
-    map.on("mousemove", onDrag);
-    map.once("mouseup", function(eu) {
-      map.dragging.enable();
-      map.off("mousemove", onDrag);
-      if (dragStart && eu.latlng.distanceTo(dragStart) > 5) {
-        saveCoords(field.name, eu.latlng.lat, eu.latlng.lng);
-        m.setLatLng(eu.latlng);
-        field.lat = eu.latlng.lat;
-        field.lng = eu.latlng.lng;
-        m.openPopup();
-      }
-      dragStart = null;
+    // Add points at vertices
+    field.polygon.forEach(pt => {
+      L.circleMarker(pt, { radius: 2.5, color: '#fff', weight: 1, fillColor: polyColor, fillOpacity: 0.8 }).addTo(polyGroup);
     });
-    function onDrag(em) { m.setLatLng(em.latlng); }
-  });
 
-  markers[field.name] = m;
+    polyGroup.bindPopup(`
+      <div class="popup-title">🌾 ${esc(field.name)} (גבולות חלקה)</div>
+      ${field.area_dunam ? `<div class="popup-row">📏 שטח: <span>${esc(field.area_dunam)} דונם</span></div>` : ""}
+      <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
+      <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
+      ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${esc(field.crop)}</span></div>` : ""}
+      ${field.client ? `<div class="popup-row">👤 לקוח: <span>${esc(field.client)}</span></div>` : ""}
+    `);
+    polyGroup.on("click", () => highlightCard(field.uid));
+    polygons[field.uid] = polyGroup;
+  }
+
+  // 2. Draw Point Pin (Circle Marker) if coordinates exist
+  if (field.lat != null && field.lng != null) {
+    if (markers[field.uid]) markers[field.uid].remove();
+
+    const radius = hourRadius(field.hours);
+    const m = L.circleMarker([field.lat, field.lng], {
+      radius, color: "#fff", weight: 2,
+      fillColor: color, fillOpacity: 0.88,
+    }).addTo(map);
+
+    m.bindPopup(`
+      <div class="popup-title">📍 ${esc(field.name)}</div>
+      <div class="popup-row">⏱ שעות: <span>${field.hours}</span></div>
+      <div class="popup-row">🔧 עבודות: <span>${field.jobs}</span></div>
+      ${field.crop   ? `<div class="popup-row">🌱 גידול: <span>${esc(field.crop)}</span></div>` : ""}
+      ${field.client ? `<div class="popup-row">👤 לקוח: <span>${esc(field.client)}</span></div>` : ""}
+      ${field.last_date ? `<div class="popup-row">📅 עדכון אחרון: <span>${esc(formatDate(field.last_date))}</span></div>` : ""}
+      <button class="btn btn-sm btn-outline-primary w-100 mt-2" data-action="start-area" data-uid="${field.uid}">📐 הגדרת שטח</button>
+      <div style="margin-top:.5rem;font-size:.72rem;color:#888">גרור לשינוי מיקום</div>
+    `);
+
+    m.on("click", () => highlightCard(field.uid));
+
+    // Allow dragging to reposition
+    m.options.interactive = true;
+    let dragStart = null;
+
+    m.on("mousedown", function(e) {
+      dragStart = e.latlng;
+      map.dragging.disable();
+      map.on("mousemove", onDrag);
+      map.once("mouseup", function(eu) {
+        map.dragging.enable();
+        map.off("mousemove", onDrag);
+        if (dragStart && eu.latlng.distanceTo(dragStart) > 5) {
+          saveCoords(field.name, eu.latlng.lat, eu.latlng.lng);
+          m.setLatLng(eu.latlng);
+          field.lat = eu.latlng.lat;
+          field.lng = eu.latlng.lng;
+          m.openPopup();
+        }
+        dragStart = null;
+      });
+      function onDrag(em) { m.setLatLng(em.latlng); }
+    });
+
+    markers[field.uid] = m;
+  }
 }
 
 // ── Save coords to server ──────────────────────────────────────────────────────
-async function saveCoords(name, lat, lng) {
+async function saveCoords(name, lat, lng, isPolygon = false, polygonCoords = null, color = "") {
+  let field = fields.find(f => f.name === name);
+  if (!field) return;
+
+  if (!field.uid) {
+    field.uid = generateUID();
+  }
+
+  const payload = {
+    uid: field.uid,
+    name: field.name,
+    color: color || field.color || "",
+    type: isPolygon ? "polygon" : "pin"
+  };
+
+  if (isPolygon) {
+    payload.coordinates = polygonCoords;
+  } else {
+    payload.lat = lat;
+    payload.lng = lng;
+  }
+
   try {
-    const res = await fetch("/api/fields/coords", {
+    const res = await fetch("/api/fields", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": CSRF },
-      body: JSON.stringify({ name, lat, lng }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) console.error("Save failed", await res.text());
+    else {
+      // Sync to sessionStorage
+      sessionStorage.setItem("fieldsData", JSON.stringify(fields));
+    }
   } catch(e) { console.error(e); }
 }
 
 // ── Highlight card ────────────────────────────────────────────────────────────
-function highlightCard(name) {
+function highlightCard(uid) {
   document.querySelectorAll(".field-card").forEach(c => c.classList.remove("selected"));
-  const card = document.getElementById("card-" + CSS.escape(name));
+  const card = document.getElementById("card-" + uid);
   if (card) { card.classList.add("selected"); card.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
-  if (markers[name]) markers[name].openPopup();
+  if (markers[uid]) markers[uid].openPopup();
+  else if (polygons[uid]) polygons[uid].openPopup();
+}
+
+
+
+// ── Polygon Area Definition ("הגדרת שטח") Engine ──────────────────────────────
+let activeAreaField = null;
+let areaPolygonDrawer = null;
+
+function startDefineArea(fieldName) {
+  stopPlacing();
+  activeAreaField = fieldName;
+
+  if (areaPolygonDrawer) {
+    try { areaPolygonDrawer.disable(); } catch(e) {}
+  }
+
+  areaPolygonDrawer = new L.Draw.Polygon(map, {
+    allowIntersection: false,
+    showArea: true,
+    shapeOptions: { color: '#3730a3', fillColor: '#6366f1', fillOpacity: 0.4 }
+  });
+
+  areaPolygonDrawer.enable();
+
+  const nameEl = document.getElementById("drawingFieldName");
+  const countEl = document.getElementById("drawingVertexCount");
+  const finishBtn = document.getElementById("btnFinishDraw");
+  const bar = document.getElementById("drawingActionBar");
+
+  if (nameEl) nameEl.textContent = fieldName;
+  if (countEl) countEl.textContent = "0/12 קודקודים";
+  if (finishBtn) finishBtn.disabled = true;
+  if (bar) bar.classList.add("show");
+}
+
+function updateDrawingProgress() {
+  if (!areaPolygonDrawer || !areaPolygonDrawer._enabled) return;
+  const poly = areaPolygonDrawer._poly;
+  const count = poly ? poly.getLatLngs().length : 0;
+
+  const countEl = document.getElementById("drawingVertexCount");
+  const finishBtn = document.getElementById("btnFinishDraw");
+
+  if (countEl) countEl.textContent = `${count}/12 קודקודים`;
+  if (finishBtn) finishBtn.disabled = count < 3;
+
+  if (count >= 12) {
+    alert("הגעת למגבלה של 12 קודקודים");
+    finishPolygonDraw();
+  }
+}
+
+function finishPolygonDraw() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.completeShape();
+  }
+}
+
+function undoPolygonVertex() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.deleteLastVertex();
+    updateDrawingProgress();
+  }
+}
+
+function cancelPolygonDraw() {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+  }
+  activeAreaField = null;
+  document.getElementById("drawingActionBar")?.classList.remove("show");
+}
+
+// Right-click vertex placement (suppresses browser context menu)
+map.on("contextmenu", function(e) {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    e.originalEvent.preventDefault();
+    areaPolygonDrawer.addVertex(e.latlng);
+    updateDrawingProgress();
+  }
+});
+
+// Update progress on vertex added
+map.on(L.Draw.Event.DRAWVERTEX, function(e) {
+  updateDrawingProgress();
+});
+
+// Save drawn polygon when finalized
+map.on(L.Draw.Event.CREATED, async function(e) {
+  if (e.layerType === "polygon" && activeAreaField) {
+    const rawLatLngs = e.layer.getLatLngs()[0];
+    const coords = rawLatLngs.map(pt => [pt.lat, pt.lng]);
+    const fieldName = activeAreaField;
+    activeAreaField = null;
+
+    document.getElementById("drawingActionBar")?.classList.remove("show");
+
+    try {
+      let field = fields.find(f => f.name === fieldName);
+      if (!field) {
+        field = { uid: generateUID(), name: fieldName, hours: 0, jobs: 0, crop: "", client: "", last_date: "", lat: null, lng: null };
+        fields.push(field);
+      } else if (!field.uid) {
+        field.uid = generateUID();
+      }
+
+      field.polygon = coords;
+      field.lat = null;
+      field.lng = null;
+      if (markers[field.uid]) {
+        markers[field.uid].remove();
+        delete markers[field.uid];
+      }
+
+      const payload = {
+        uid: field.uid,
+        name: field.name,
+        color: field.color || "#6366f1",
+        type: "polygon",
+        coordinates: coords
+      };
+
+      const res = await fetch('/api/fields', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const errTxt = await res.text();
+        alert("שגיאה בשמירת פוליגון: " + errTxt);
+        return;
+      }
+      const data = await res.json();
+      if (data.ok) {
+        field.area_dunam = data.area_dunam;
+        sessionStorage.setItem("fieldsData", JSON.stringify(fields));
+        // Soft refresh the UI
+        applyFilters();
+      } else {
+        alert("שגיאה בשמירת פוליגון: " + (data.error || "שגיאה לא ידועה"));
+      }
+    } catch(err) {
+      alert("שגיאה בשמירת פוליגון: " + err);
+    }
+  }
+});
+
+// ── Custom Point Pin Prompt ────────────────────────────────────────────────────
+function promptAddCustomPin() {
+  const name = prompt("הכנס שם לנקודת המיקום החדשה (למשל: אזור עבודה דרום, נקודת ציוד):");
+  if (!name || !name.trim()) return;
+  const cleanName = name.trim();
+
+  let field = fields.find(f => f.name === cleanName);
+  if (field) {
+    alert("שם זה כבר קיים. אנא בחר שם ייחודי לנקודה החדשה.");
+    return;
+  }
+
+  field = { uid: generateUID(), name: cleanName, hours: 0, jobs: 0, crop: "", client: "", last_date: "", lat: null, lng: null, is_custom: true };
+  fields.unshift(field);
+  startPlacing(cleanName);
+  renderPanel();
 }
 
 // ── Placing mode ──────────────────────────────────────────────────────────────
 function startPlacing(name) {
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+    activeAreaField = null;
+  }
   placingField = name;
   map.getContainer().style.cursor = "crosshair";
-  document.getElementById("placingHint").classList.add("show");
+  const hintEl = document.getElementById("placingHint");
+  if (hintEl) {
+    hintEl.textContent = `📍 לחץ על המפה לקביעת מיקום הנקודה עבור '${name}'`;
+    hintEl.classList.add("show");
+  }
   document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
-  const card = document.getElementById("card-" + CSS.escape(name));
+  const field = fields.find(f => f.name === name);
+  const card = field && document.getElementById("card-" + field.uid);
   if (card) card.classList.add("placing");
 }
 
 function stopPlacing() {
   placingField = null;
+  if (areaPolygonDrawer && areaPolygonDrawer._enabled) {
+    areaPolygonDrawer.disable();
+    activeAreaField = null;
+  }
   map.getContainer().style.cursor = "";
-  document.getElementById("placingHint").classList.remove("show");
+  document.getElementById("placingHint")?.classList.remove("show");
   document.querySelectorAll(".field-card").forEach(c => c.classList.remove("placing"));
 }
 
@@ -261,15 +614,15 @@ map.on("click", function(e) {
   const name = placingField;
   const { lat, lng } = e.latlng;
 
-  // Remove old marker if exists
-  if (markers[name]) { markers[name].remove(); delete markers[name]; }
+  let field = fields.find(f => f.name === name);
 
-  const field = fields.find(f => f.name === name);
+  // Remove old marker if exists
+  if (field && markers[field.uid]) { markers[field.uid].remove(); delete markers[field.uid]; }
+
   if (field) { field.lat = lat; field.lng = lng; }
 
   saveCoords(name, lat, lng);
-  if (field) addMarker(field);
-  if (markers[name]) markers[name].openPopup();
+  if (field) { addMarker(field); if (markers[field.uid]) markers[field.uid].openPopup(); }
 
   stopPlacing();
   renderPanel();
@@ -279,13 +632,12 @@ map.on("click", function(e) {
 function renderPanel() {
   const panel = document.getElementById("sidePanel");
   if (!fields.length) {
-    panel.innerHTML = '<div class="text-muted text-center py-4">אין שדות בנתונים</div>';
+    panel.innerHTML = '<div class="text-muted text-center py-4">אין שדות או נקודות בנתונים</div>';
     return;
   }
 
-  const positioned   = fields.filter(f => f.lat != null);
-  const unpositioned = fields.filter(f => f.lat == null);
-  const ordered      = [...unpositioned, ...positioned];
+  const positioned   = filteredFields.filter(f => f.lat != null || f.polygon != null);
+  const unpositioned = filteredFields.filter(f => f.lat == null && f.polygon == null);
 
   let html = "";
 
@@ -295,85 +647,316 @@ function renderPanel() {
     </div>`;
   }
 
-  ordered.forEach((f, i) => {
-    const hasCoords  = f.lat != null;
+  for (const f of [...unpositioned, ...positioned]) {
+    const hasCoords  = f.lat != null || f.polygon != null;
     const bColor     = hasCoords ? badgeColor(f.hours) : "#adb5bd";
     const cardClass  = hasCoords ? "" : " no-coords";
     const btnLabel   = hasCoords ? "הזז" : "סמן";
     const btnClass   = hasCoords ? "reposition" : "";
+    const polyBadge  = f.polygon ? `<span class="badge-polygon">${f.area_dunam ? esc(f.area_dunam) + ' דונם' : 'שטח הוגדר'}</span>` : '';
+
+    // Default color if missing
+    const pickerColor = f.color || "#6366f1";
+    const colorPickerHtml = f.polygon ? `<input type="color" title="שנה צבע שטח" value="${esc(pickerColor)}" data-action="color" data-uid="${f.uid}" onclick="event.stopPropagation()" style="width:24px;height:24px;padding:0;border:none;background:transparent;cursor:pointer">` : '';
 
     html += `
-    <div class="field-card${cardClass}" id="card-${CSS.escape(f.name)}" data-idx="${i}">
-      <span class="badge-hours" style="background:${bColor}">${f.hours} ש׳</span>
-      <div class="field-name">${esc(f.name)}</div>
+    <div class="field-card${cardClass}" id="card-${f.uid}" data-action="highlight" data-uid="${f.uid}">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <span class="badge-hours" style="background:${bColor}">${f.hours} ש׳</span>
+          ${polyBadge}
+        </div>
+        <div class="d-flex gap-2">
+          ${colorPickerHtml}
+          <i class="bi bi-pencil-square text-muted" title="שנה שם" style="cursor:pointer" data-action="rename" data-uid="${f.uid}"></i>
+          <i class="bi bi-trash-fill text-danger" title="מחק מיקום שדה" style="cursor:pointer" data-action="delete" data-uid="${f.uid}"></i>
+        </div>
+      </div>
+      <div class="field-name mt-1">${esc(f.name)}</div>
       <div class="field-meta">
         <span>🔧 ${f.jobs} עבודות</span>
         ${f.crop   ? `<span>🌱 ${esc(f.crop)}</span>` : ""}
         ${f.client ? `<span>👤 ${esc(f.client)}</span>` : ""}
         ${f.last_date ? `<span>📅 ${esc(formatDate(f.last_date))}</span>` : ""}
       </div>
-      <button class="btn-place ${btnClass}" data-idx="${i}">
-        📍 ${btnLabel}
-      </button>
+      <div class="d-flex gap-1 mt-2">
+        ${f.polygon ? '' : `
+        <button class="btn-place ${btnClass} flex-grow-1" data-action="place" data-uid="${f.uid}">
+          📍 ${btnLabel}
+        </button>
+        `}
+        <button class="btn btn-sm btn-outline-primary flex-grow-1 py-1" style="font-size:.72rem" data-action="start-area" data-uid="${f.uid}">
+          📐 הגדרת שטח
+        </button>
+      </div>
     </div>`;
-  });
+  }
 
   panel.innerHTML = html;
-
-  panel.querySelectorAll(".field-card").forEach(card => {
-    card.addEventListener("click", () => {
-      const f = ordered[Number(card.dataset.idx)];
-      if (f) highlightCard(f.name);
-    });
-  });
-  panel.querySelectorAll(".btn-place").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const f = ordered[Number(btn.dataset.idx)];
-      if (f) handlePlaceBtn(f.name, f.lat != null);
-    });
-  });
 }
 
+// ── Delegated actions (side panel + map popups) ────────────────────────────────
+// All user-controlled text (field names, crops, clients) is escaped above and
+// never interpolated into onclick="..." strings — a field named e.g. `x" onmouseover="..`
+// would otherwise break out of the HTML attribute. Buttons/cards instead carry a
+// data-uid and are dispatched here, looked up against the trusted `fields` array.
+document.addEventListener("click", function(e) {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const uid = el.dataset.uid;
+  const field = uid ? fieldByUid(uid) : null;
+  if (!field) return;
+  switch (el.dataset.action) {
+    case "highlight":
+      highlightCard(field.uid);
+      break;
+    case "place":
+      e.stopPropagation();
+      handlePlaceBtn(field.name, field.lat != null || field.polygon != null);
+      break;
+    case "start-area":
+      e.stopPropagation();
+      startDefineArea(field.name);
+      break;
+    case "rename":
+      e.stopPropagation();
+      renameField(field.name);
+      break;
+    case "delete":
+      e.stopPropagation();
+      deleteField(field.name);
+      break;
+  }
+});
+document.addEventListener("change", function(e) {
+  const el = e.target.closest('[data-action="color"]');
+  if (!el) return;
+  const field = fieldByUid(el.dataset.uid);
+  if (field) changeFieldColor(field.name, el.value);
+});
+
 function handlePlaceBtn(name, hasCoords) {
+  const field = fields.find(f => f.name === name);
   if (placingField === name) {
     stopPlacing();
     renderPanel();
     return;
   }
   startPlacing(name);
-  if (hasCoords && markers[name]) {
-    map.setView(markers[name].getLatLng(), Math.max(map.getZoom(), 13));
+  if (hasCoords && field && markers[field.uid]) {
+    map.setView(markers[field.uid].getLatLng(), Math.max(map.getZoom(), 13));
   }
   renderPanel();
   // Re-mark the card as placing after renderPanel rebuild
-  const card = document.getElementById("card-" + CSS.escape(name));
+  const card = field && document.getElementById("card-" + field.uid);
   if (card) card.classList.add("placing");
   // Update button text
   const btn = card && card.querySelector(".btn-place");
   if (btn) { btn.textContent = "❌ ביטול"; btn.classList.add("cancel"); }
 }
 
+// ── Filtering & UI Actions ──────────────────────────────────────────────────
+let filteredFields = [];
+
+function applyFilters() {
+  const nameQ = document.getElementById("filterName").value.toLowerCase();
+  const minArea = parseFloat(document.getElementById("filterAreaMin").value) || 0;
+  const maxArea = parseFloat(document.getElementById("filterAreaMax").value) || Infinity;
+  const minHours = parseFloat(document.getElementById("filterHoursMin").value) || 0;
+  const maxHours = parseFloat(document.getElementById("filterHoursMax").value) || Infinity;
+  const minJobs = parseInt(document.getElementById("filterJobsMin").value) || 0;
+  const maxJobs = parseInt(document.getElementById("filterJobsMax").value) || Infinity;
+
+  filteredFields = fields.filter(f => {
+    if (nameQ && !f.name.toLowerCase().includes(nameQ)) return false;
+    const area = f.area_dunam || 0;
+    const hours = f.hours || 0;
+    const jobs = f.jobs || 0;
+    if (area < minArea || area > maxArea) return false;
+    if (hours < minHours || hours > maxHours) return false;
+    if (jobs < minJobs || jobs > maxJobs) return false;
+    return true;
+  });
+
+  // Re-draw map
+  Object.values(markers).forEach(m => m.remove());
+  Object.values(polygons).forEach(p => p.remove());
+  markers = {};
+  polygons = {};
+  filteredFields.forEach(addMarker);
+
+  renderPanel();
+}
+
+function clearFilters() {
+  document.getElementById("filterName").value = "";
+  document.getElementById("filterAreaMin").value = "";
+  document.getElementById("filterAreaMax").value = "";
+  document.getElementById("filterHoursMin").value = "";
+  document.getElementById("filterHoursMax").value = "";
+  document.getElementById("filterJobsMin").value = "";
+  document.getElementById("filterJobsMax").value = "";
+  applyFilters();
+}
+
+async function renameField(oldName) {
+  const field = fields.find(f => f.name === oldName);
+  if (!field || !field.uid) return;
+
+  const newName = prompt("הכנס שם חדש:", oldName);
+  if (!newName || newName.trim() === "" || newName === oldName) return;
+
+  if (fields.some(f => f.name === newName)) {
+    alert("שם זה כבר קיים. אנא בחר שם ייחודי.");
+    return;
+  }
+
+  field.name = newName;
+  const isPoly = !!field.polygon;
+  saveCoords(field.name, field.lat, field.lng, isPoly, field.polygon, field.color);
+  applyFilters();
+}
+
+async function changeFieldColor(name, newColor) {
+  const field = fields.find(f => f.name === name);
+  if (!field || !field.uid) return;
+
+  field.color = newColor;
+  saveCoords(field.name, field.lat, field.lng, true, field.polygon, newColor);
+  applyFilters();
+}
+
+async function deleteField(name) {
+  if (!confirm(`האם אתה בטוח שברצונך למחוק את מיקום/שטח השדה '${name}' מהמפה? פעולה זו לא תמחק עבודות היסטוריות.`)) return;
+
+  const fieldIndex = fields.findIndex(f => f.name === name);
+  if (fieldIndex === -1) return;
+  const field = fields[fieldIndex];
+
+  if (field.uid) {
+    try {
+      const res = await fetch(`/api/fields/${field.uid}`, {
+        method: "DELETE",
+        headers: { "X-CSRFToken": CSRF }
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch(err) {
+      alert("שגיאה במחיקת שדה: " + err);
+      return;
+    }
+  }
+
+  field.lat = null;
+  field.lng = null;
+  field.polygon = null;
+  field.area_dunam = 0;
+
+  // If it was a custom added field with no jobs, we can remove it entirely
+  if (field.jobs === 0) {
+    fields.splice(fieldIndex, 1);
+  }
+
+  sessionStorage.setItem("fieldsData", JSON.stringify(fields));
+  applyFilters();
+}
+
+// ── Export / Import ───────────────────────────────────────────────────────────
+function exportFieldsCSV() {
+  let csv = "UID,Name,Color,Type,SizeDunam,Coords\n";
+  for (const f of fields) {
+    if (!f.uid || (!f.polygon && f.lat == null)) continue;
+    const type = f.polygon ? "polygon" : "pin";
+    const coordsStr = f.polygon ? JSON.stringify(f.polygon) : JSON.stringify([f.lat, f.lng]);
+    const safeCoords = `"${coordsStr.replace(/"/g, '""')}"`;
+    csv += `${f.uid},${f.name},${f.color || ""},${type},${f.area_dunam || 0},${safeCoords}\n`;
+  }
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "fields_export.csv";
+  a.click();
+}
+
+async function importFieldsCSV(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const text = await file.text();
+  const rows = text.split("\n").slice(1); // skip header
+
+  for (const row of rows) {
+    if (!row.trim()) continue;
+    // Basic CSV parse (handles quoted JSON coords at the end)
+    const firstPart = row.substring(0, row.indexOf('"[') - 1);
+    const coordsPart = row.substring(row.indexOf('"[') + 1, row.lastIndexOf(']"') + 1);
+
+    if (!firstPart || !coordsPart) continue;
+
+    const [uid, name, color, type, size] = firstPart.split(",");
+    const coords = JSON.parse(coordsPart.replace(/""/g, '"'));
+
+    let field = fields.find(f => f.uid === uid || f.name === name);
+    if (!field) {
+      field = { uid, name, hours: 0, jobs: 0, crop: "", client: "", last_date: "", lat: null, lng: null };
+      fields.push(field);
+    }
+
+    field.color = color;
+    if (type === "polygon") {
+      field.polygon = coords;
+      field.area_dunam = parseFloat(size) || 0;
+      await saveCoords(name, null, null, true, coords, color);
+    } else {
+      field.lat = coords[0];
+      field.lng = coords[1];
+      await saveCoords(name, coords[0], coords[1], false, null, color);
+    }
+  }
+
+  sessionStorage.setItem("fieldsData", JSON.stringify(fields));
+  applyFilters();
+  e.target.value = "";
+}
+
 // ── Load data ─────────────────────────────────────────────────────────────────
-(async function load() {
+async function loadData() {
   try {
-    const res = await fetch("/api/fields");
-    if (!res.ok) throw new Error(await res.text());
-    fields = await res.json();
+    // Try sessionStorage first
+    const cached = sessionStorage.getItem("fieldsData");
+    if (cached) {
+      fields = JSON.parse(cached);
+    } else {
+      const res = await fetch("/api/fields");
+      if (!res.ok) throw new Error(await res.text());
+      fields = await res.json();
+      sessionStorage.setItem("fieldsData", JSON.stringify(fields));
+    }
+
+    // Every field needs a stable client-side uid (jobs that were never given a
+    // pin/polygon come back from the API with uid=null).
+    fields.forEach(f => { if (!f.uid) f.uid = generateUID(); });
+
     document.getElementById("loadingMsg")?.remove();
+    applyFilters(); // applies filters and calls addMarker & renderPanel
 
-    fields.forEach(addMarker);
-    renderPanel();
+    // Fit map to positioned markers or polygons
+    const boundsPoints = [];
+    fields.forEach(f => {
+      if (f.lat != null && f.lng != null) boundsPoints.push([f.lat, f.lng]);
+      if (f.polygon && f.polygon.length) f.polygon.forEach(p => boundsPoints.push(p));
+    });
 
-    // Fit map to positioned markers
-    const positioned = fields.filter(f => f.lat != null);
-    if (positioned.length) {
-      const bounds = L.latLngBounds(positioned.map(f => [f.lat, f.lng]));
+    if (boundsPoints.length) {
+      const bounds = L.latLngBounds(boundsPoints);
       map.fitBounds(bounds.pad(0.2));
     }
   } catch(e) {
-    document.getElementById("loadingMsg").textContent = "שגיאה בטעינת נתונים: " + e.message;
+    const msgEl = document.getElementById("loadingMsg");
+    if (msgEl) msgEl.textContent = "שגיאה בטעינת נתונים: " + e.message;
   }
-})();
+}
+
+loadData();
 </script>
 {% endblock %}
