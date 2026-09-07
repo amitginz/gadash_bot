@@ -1139,11 +1139,15 @@ def api_fields():
 def api_fields_delete(uid):
     """Delete a field's saved polygon or pin by UID (job history is untouched)."""
     try:
+        # A legacy uid ("legacy:<name>") can end up adopted into a real
+        # Polygons/Pins row too — e.g. dragging or drawing an area for a field
+        # that still carried its legacy uid writes a new row under that same
+        # uid string instead of minting a fresh one. So a legacy uid isn't
+        # necessarily *only* in the old FieldCoords sheet — clear everywhere.
         if uid.startswith("legacy:"):
             _delete_field_coord(uid[len("legacy:"):])
-        else:
-            delete_polygon_from_sheet(uid)
-            delete_pin_from_sheet(uid)
+        delete_polygon_from_sheet(uid)
+        delete_pin_from_sheet(uid)
         _log_audit("delete-field", "Web", f"uid: {uid}")
         return jsonify({"ok": True})
     except Exception as e:
