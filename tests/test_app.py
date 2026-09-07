@@ -565,3 +565,131 @@ class TestVoiceEntry:
         import inspect
         src = inspect.getsource(bot_module.start_telegram_bot)
         assert "voice_entry" in src
+
+    def test_voice_entry_full_handler_with_mocked_telegram_and_gemini(self, monkeypatch):
+        # Drives the actual async handler (not just the pure helpers) through a
+        # fake Telegram Update and a fake Gemini response, since there's no real
+        # BOT_TOKEN/GEMINI_API_KEY available to hit the live APIs from here.
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import gadash.bot as bot_module
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+
+        fake_response = MagicMock()
+        fake_response.text = json.dumps({
+            "שם לקוח": "איתמר", "תאריך": "", "עבודה": "עשינו ריסוס בבוקר",
+            "שם חלקה": "חלקה ב", "גידול": "חיטה", "כמות": "30 דונם",
+            "שעות": "3.5", "כלי": "מרסס", "מפעיל": "דני", "הערות": "",
+        })
+        fake_model = MagicMock()
+        fake_model.generate_content.return_value = fake_response
+        fake_genai = MagicMock()
+        fake_genai.GenerativeModel.return_value = fake_model
+        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+
+        voice_file = MagicMock()
+        voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg-audio"))
+        voice = MagicMock()
+        voice.get_file = AsyncMock(return_value=voice_file)
+
+        processing_msg = MagicMock()
+        processing_msg.edit_text = AsyncMock()
+
+        message = MagicMock()
+        message.voice = voice
+        message.from_user.id = 999999
+        message.reply_text = AsyncMock(return_value=processing_msg)
+
+        update = MagicMock()
+        update.message = message
+        context = MagicMock()
+        context.user_data = {}
+
+        result_state = asyncio.run(bot_module.voice_entry(update, context))
+
+        assert result_state == bot_module.CONFIRM
+        assert context.user_data["שם לקוח"] == "איתמר"
+        assert context.user_data["עבודה"] == "ריסוס"       # normalized from free text
+        assert context.user_data["תאריך"]                   # defaulted to today
+        assert context.user_data["שעות"] == "3.5"
+
+        fake_genai.configure.assert_called_once_with(api_key="fake-key-for-test")
+        blob = fake_model.generate_content.call_args[0][0][0]
+        assert blob == {"mime_type": "audio/ogg", "data": b"fake-ogg-audio"}
+
+        processing_msg.edit_text.assert_awaited_once()
+        assert "איתמר" in processing_msg.edit_text.call_args[0][0]
+        assert message.reply_text.await_count == 2  # "מקשיב..." + confirm-keyboard prompt
+
+    def test_voice_entry_no_client_name_stays_on_menu(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import gadash.bot as bot_module
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+
+        fake_response = MagicMock()
+        fake_response.text = json.dumps({"שם לקוח": "", "עבודה": "חריש"})
+        fake_model = MagicMock()
+        fake_model.generate_content.return_value = fake_response
+        fake_genai = MagicMock()
+        fake_genai.GenerativeModel.return_value = fake_model
+        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+
+        voice_file = MagicMock()
+        voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"audio"))
+        voice = MagicMock()
+        voice.get_file = AsyncMock(return_value=voice_file)
+
+        processing_msg = MagicMock()
+        processing_msg.edit_text = AsyncMock()
+        message = MagicMock()
+        message.voice = voice
+        message.from_user.id = 999999
+        message.reply_text = AsyncMock(return_value=processing_msg)
+        update = MagicMock()
+        update.message = message
+        context = MagicMock()
+        context.user_data = {}
+
+        result_state = asyncio.run(bot_module.voice_entry(update, context))
+
+        assert result_state == bot_module.MENU
+        assert context.user_data == {}  # never populated — nothing to confirm/save
+        assert "לקוח" in processing_msg.edit_text.call_args[0][0]
+
+    def test_voice_entry_gemini_error_falls_back_gracefully(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import gadash.bot as bot_module
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+
+        fake_model = MagicMock()
+        fake_model.generate_content.side_effect = RuntimeError("network blip")
+        fake_genai = MagicMock()
+        fake_genai.GenerativeModel.return_value = fake_model
+        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+
+        voice_file = MagicMock()
+        voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"audio"))
+        voice = MagicMock()
+        voice.get_file = AsyncMock(return_value=voice_file)
+
+        processing_msg = MagicMock()
+        processing_msg.edit_text = AsyncMock()
+        message = MagicMock()
+        message.voice = voice
+        message.from_user.id = 999999
+        message.reply_text = AsyncMock(return_value=processing_msg)
+        update = MagicMock()
+        update.message = message
+        context = MagicMock()
+        context.user_data = {}
+
+        result_state = asyncio.run(bot_module.voice_entry(update, context))
+
+        assert result_state == bot_module.MENU
+        processing_msg.edit_text.assert_awaited_once()
+        assert "לא הצלחתי" in processing_msg.edit_text.call_args[0][0]
