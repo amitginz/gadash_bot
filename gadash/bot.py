@@ -1,6 +1,8 @@
 import asyncio
+import json
 import logging
 import os
+import re
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -12,8 +14,13 @@ from telegram.ext import (
     ContextTypes, MessageHandler, filters,
 )
 
+try:
+    import google.generativeai as _genai
+except ImportError:
+    _genai = None
+
 from gadash.audit import _log_audit
-from gadash.models import COLUMNS, WorkEntry
+from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.service import create_entry
 from gadash.sheets import delete_row_in_gsheet, load_data_from_gsheet
 from gadash.subscribers import _add_subscriber, _get_subscribers
@@ -25,6 +32,55 @@ from gadash.workers import (
 )
 
 _logger = logging.getLogger(__name__)
+
+VOICE_FIELDS = [
+    "שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול",
+    "כמות", "שעות", "כלי", "מפעיל", "הערות",
+]
+
+VOICE_PROMPT = """אתה עוזר להזין נתוני עבודות שדה חקלאיות ממערכת ניהול עבודות גד"ש.
+תמלל את ההודעה הקולית (בעברית מדוברת) וחלץ ממנה את הפרטים הבאים כאובייקט JSON יחיד, בלי טקסט נוסף ובלי markdown fences:
+
+{
+  "שם לקוח": "",
+  "תאריך": "בפורמט YYYY-MM-DD אם הוזכר תאריך מפורש (למשל 'אתמול', 'ה-3 ליוני') — אחרת השאר ריק",
+  "עבודה": "אחד בדיוק מהערכים: חריש, ריסוס, קציר, דיסוק — או 'אחר' אם לא מתאים",
+  "שם חלקה": "",
+  "גידול": "",
+  "כמות": "לדוגמה '30 דונם'",
+  "שעות": "מספר שעות עבודה, ספרות בלבד אם אפשר",
+  "כלי": "",
+  "מפעיל": "",
+  "הערות": ""
+}
+
+אם פרט מסוים לא הוזכר בהקלטה כלל — השאר את הערך שלו כמחרוזת ריקה. אל תמציא מידע שלא נאמר בפירוש."""
+
+
+def _strip_json_fences(raw: str) -> str:
+    """Gemini sometimes wraps JSON in ```json ... ``` despite instructions not to."""
+    return re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE).strip()
+
+
+def _normalize_task(text: str) -> str:
+    """Map free-text task guesses onto the fixed VALID_TASKS enum, defaulting to 'אחר'."""
+    text = (text or "").strip()
+    if text in VALID_TASKS:
+        return text
+    return next((t for t in VALID_TASKS if t in text), "אחר")
+
+
+def _fields_from_voice_json(raw: str) -> dict:
+    """Parse a Gemini voice-transcription response into WorkEntry-shaped field values.
+
+    Raises ValueError/json.JSONDecodeError on malformed model output — callers
+    decide how to degrade (e.g. fall back to the manual step-by-step flow).
+    """
+    data = json.loads(_strip_json_fences(raw))
+    fields = {k: str(data.get(k, "") or "").strip() for k in VOICE_FIELDS}
+    fields["עבודה"] = _normalize_task(fields["עבודה"])
+    fields["תאריך"] = fields["תאריך"] or date.today().strftime("%Y-%m-%d")
+    return fields
 
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
 
@@ -76,7 +132,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["_worker_name"] = worker["שם"]
             _add_subscriber(tid)
             await update.message.reply_text(
-                f'שלום {worker["שם"]}! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
+                f'שלום {worker["שם"]}! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?\n\n'
+                '🎤 טיפ: אפשר גם פשוט לשלוח לי הודעה קולית עם פרטי העבודה, במקום למלא שלב-שלב.',
                 reply_markup=_menu_markup(),
             )
             return MENU
@@ -90,7 +147,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return REGISTER_NAME
     _add_subscriber(tid)
     await update.message.reply_text(
-        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?',
+        'שלום! אני בוט ניהול העבודות של גד"ש 🌾\nמה תרצה לעשות?\n\n'
+        '🎤 טיפ: אפשר גם פשוט לשלוח לי הודעה קולית עם פרטי העבודה, במקום למלא שלב-שלב.',
         reply_markup=_menu_markup(),
     )
     return MENU
@@ -372,6 +430,63 @@ async def note_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CONFIRM
 
 
+async def voice_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎤 Let a worker report a job by just talking instead of the 12-step flow.
+
+    Gemini transcribes the Hebrew voice note and extracts WorkEntry fields
+    directly, which get dropped into context.user_data and handed to the
+    existing confirm() step — so saving/validation stays exactly as before.
+    """
+    tid = update.message.from_user.id
+    workers = _load_workers()
+    if workers and not _get_worker_by_telegram_id(tid):
+        return await start(update, context)
+
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if not gemini_key or not _genai:
+        await update.message.reply_text(
+            "🎤 דיווח קולי לא זמין כרגע. אפשר להזין ידנית — שלח 'הזן עבודה חדשה'.",
+            reply_markup=_menu_markup(),
+        )
+        return MENU
+
+    processing_msg = await update.message.reply_text("🎤 מקשיב ומנתח את ההקלטה...")
+    try:
+        voice_file = await update.message.voice.get_file()
+        audio_bytes = bytes(await voice_file.download_as_bytearray())
+
+        _genai.configure(api_key=gemini_key)
+        model = _genai.GenerativeModel("gemini-2.5-flash")
+        response = await asyncio.to_thread(
+            model.generate_content,
+            [{"mime_type": "audio/ogg", "data": audio_bytes}, VOICE_PROMPT],
+        )
+        fields = _fields_from_voice_json(response.text)
+    except Exception as e:
+        _logger.warning("[BOT] Voice parsing failed: %s", e)
+        await processing_msg.edit_text(
+            "❌ לא הצלחתי לנתח את ההקלטה. אפשר לנסות שוב, או להזין ידנית — שלח 'הזן עבודה חדשה'."
+        )
+        return MENU
+
+    if not fields["שם לקוח"]:
+        await processing_msg.edit_text(
+            "🎤 שמעתי את ההקלטה, אבל לא זיהיתי בה שם לקוח.\n"
+            "נסה הקלטה נוספת ותזכיר את שם הלקוח, או הזן ידנית — שלח 'הזן עבודה חדשה'."
+        )
+        return MENU
+
+    context.user_data.clear()
+    context.user_data.update(fields)
+    summary = "\n".join(f"• {k}: {v}" for k, v in fields.items() if v)
+    await processing_msg.edit_text(f"🎤 זיהיתי מההקלטה:\n\n{summary}")
+    await update.message.reply_text(
+        "לחץ כן לשמירה או לא לביטול.",
+        reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
+    )
+    return CONFIRM
+
+
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         try:
@@ -432,10 +547,14 @@ def start_telegram_bot():
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
+            MessageHandler(filters.VOICE, voice_entry),
             MessageHandler(filters.TEXT & ~filters.COMMAND, ask_start),
         ],
         states={
-            MENU:              [MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice)],
+            MENU:              [
+                MessageHandler(filters.VOICE, voice_entry),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, menu_choice),
+            ],
             CLIENT:            [MessageHandler(filters.TEXT & ~filters.COMMAND, client_step)],
             DATE:              [MessageHandler(filters.TEXT & ~filters.COMMAND, date_input)],
             TASK:              [MessageHandler(filters.TEXT & ~filters.COMMAND, task)],
