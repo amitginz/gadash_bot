@@ -48,6 +48,8 @@ from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
     _verify_worker,
 )
+from flask_migrate import Migrate
+from gadash.models_db import db
 
 PAGE_SIZE = 50
 _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -60,6 +62,14 @@ _logger = logging.getLogger(__name__)
 
 if app.secret_key == "gadash-dev-secret-key":
     _logger.warning("[SECURITY] SECRET_KEY is the insecure default — set SECRET_KEY env var in production!")
+
+# ── Postgres (multi-tenant migration, in progress — no route reads from this
+# yet; see gadash/models_db.py and the migration plan) ─────────────────────────
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URL", "postgresql:///gadash_dev"
+).replace("postgres://", "postgresql://", 1)  # Heroku/Fly-style URLs use the old scheme name
+db.init_app(app)
+migrate = Migrate(app, db)
 
 
 def _is_pw_hash(s: str) -> bool:

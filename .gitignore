@@ -53,3 +53,6 @@ take_screenshots.py
 # Claude AI config
 CLAUDE.md
 .claude/
+
+# Postgres migration dev artifacts
+migrations/versions/__pycache__/
