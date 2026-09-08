@@ -7,9 +7,14 @@ the one column that's intentionally *not* tenant-scoped: it's globally
 unique so the single shared Telegram bot can resolve which tenant a message
 belongs to from one lookup, instead of running one bot per tenant.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask_sqlalchemy import SQLAlchemy
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
 
 db = SQLAlchemy()
 
@@ -19,7 +24,7 @@ class Tenant(db.Model):
 
     id         = db.Column(db.Integer, primary_key=True)
     name       = db.Column(db.String(200), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
     managers     = db.relationship("Manager", back_populates="tenant", cascade="all, delete-orphan")
     workers      = db.relationship("Worker", back_populates="tenant", cascade="all, delete-orphan")
@@ -74,7 +79,7 @@ class WorkEntryRow(db.Model):
     operator   = db.Column(db.String(120), default="")
     notes      = db.Column(db.Text, default="")
     entered_by = db.Column(db.String(120), default="")
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
     tenant = db.relationship("Tenant", back_populates="work_entries")
 
