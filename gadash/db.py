@@ -25,7 +25,14 @@ from datetime import datetime
 import pandas as pd
 
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
-from gadash.models_db import AuditLogEntry, Field, Rate, Subscriber, WorkEntryRow, db
+from gadash.models_db import AuditLogEntry, Field, Rate, Subscriber, Tenant, WorkEntryRow, db
+
+
+def list_tenant_ids() -> list:
+    """All tenant ids — used by the bot's daily/weekly broadcast jobs, which
+    have to run once per tenant since subscribers and job data are
+    tenant-scoped (one shared bot serves every tenant)."""
+    return [t.id for t in Tenant.query.with_entities(Tenant.id).all()]
 
 _FIELD_MAP = {
     "שם לקוח": "client", "תאריך": "date", "עבודה": "task", "שם חלקה": "field_name",

@@ -1,94 +1,104 @@
 """
 Shared pytest fixtures for gadash_bot.
 
-Replaces all Google Sheets I/O with in-memory fakes so the suite is
-deterministic, fast, and never depends on live GOOGLE_CREDS/credentials.json.
-Without this, calls that fail to authenticate retry 3x with backoff
-(gadash/sheets.py:_get_sheet) before falling back to an empty result —
-several seconds per call, and different behavior depending on whether the
-machine running the tests happens to have real credentials configured.
+Runs against a real local Postgres (DATABASE_URL, defaulting to the
+gadash_test database created for this purpose — see the migration plan)
+rather than mocking gadash/sheets.py, since that module is no longer the
+live data path. Each test gets a fresh tenant and an empty schema.
+
+`mock_gsheet["df"] = pd.DataFrame(rows, columns=COLUMNS)` and
+`mock_gsheet["rates"]["חריש"] = {...}` — the seeding patterns most of
+tests/test_app.py already used — still work unchanged: the returned state
+object writes straight through to the tenant's rows in Postgres instead of
+an in-memory frame, so the many existing `_seed(mock_gsheet, [...])`
+helpers didn't need touching.
 """
-import pandas as pd
+import os
+import secrets
+
 import pytest
 
+os.environ.setdefault("DATABASE_URL", "postgresql:///gadash_test")
+
 import app as app_module
-import gadash.service as service_module
-import gadash.sheets as sheets_module
-from gadash.models import COLUMNS, VALID_TASKS
+from gadash import auth
+from gadash.db import (
+    append_work_entry, load_rates, load_work_entries, save_rates,
+)
+from gadash.models import WorkEntry
+from gadash.models_db import (
+    AuditLogEntry, Field, Manager, Rate, Subscriber, Tenant, Worker, WorkEntryRow, db,
+)
+
+_SCHEMA_READY = False
+
+
+def _ensure_schema():
+    global _SCHEMA_READY
+    if not _SCHEMA_READY:
+        db.create_all()
+        _SCHEMA_READY = True
+
+
+class _RatesProxy(dict):
+    """`mock_gsheet["rates"][task] = {...}` writes straight through to the DB."""
+
+    def __init__(self, tenant_id):
+        super().__init__(load_rates(tenant_id))
+        self._tenant_id = tenant_id
+
+    def __setitem__(self, task, value):
+        save_rates(self._tenant_id, {task: value})
+        super().__setitem__(task, value)
+
+
+class _TenantState(dict):
+    """`mock_gsheet["df"] = <DataFrame>` replaces the tenant's work entries in
+    Postgres; `mock_gsheet["df"]` reads them back the same shape tests
+    already expect (a plain frame over COLUMNS)."""
+
+    def __init__(self, tenant_id):
+        super().__init__()
+        self.tenant_id = tenant_id
+
+    def __setitem__(self, key, value):
+        if key == "df":
+            WorkEntryRow.query.filter_by(tenant_id=self.tenant_id).delete()
+            db.session.commit()
+            for _, row in value.iterrows():
+                append_work_entry(self.tenant_id, WorkEntry.from_dict(row.to_dict()))
+            return
+        super().__setitem__(key, value)
+
+    def __getitem__(self, key):
+        if key == "df":
+            return load_work_entries(self.tenant_id)
+        if key == "rates":
+            return _RatesProxy(self.tenant_id)
+        return super().__getitem__(key)
 
 
 @pytest.fixture(autouse=True)
-def mock_gsheet(monkeypatch):
-    state = {
-        "df": pd.DataFrame(columns=COLUMNS),
-        "rates": {t: {"revenue": 0.0, "cost": 0.0} for t in VALID_TASKS},
-    }
+def mock_gsheet():
+    """Named to match the pre-Postgres fixture — see module docstring."""
+    with app_module.app.app_context():
+        _ensure_schema()
+        for model in [WorkEntryRow, Field, Rate, AuditLogEntry, Subscriber, Worker, Manager, Tenant]:
+            model.query.delete()
+        db.session.commit()
+        yield _TenantState(auth.create_tenant(
+            "טננט בדיקה", f"testmgr-{secrets.token_hex(4)}", "testpass123",
+            slug=f"test-{secrets.token_hex(4)}",
+        ))
 
-    def fake_load_rates():
-        return {t: dict(v) for t, v in state["rates"].items()}
 
-    def fake_save_rates(rates):
-        state["rates"] = {t: dict(v) for t, v in rates.items()}
-
-    def fake_load(force_refresh: bool = False):
-        return state["df"].copy()
-
-    def fake_append(entry):
-        row = pd.DataFrame([entry.to_dict()], columns=COLUMNS)
-        state["df"] = pd.concat([state["df"], row], ignore_index=True)
-
-    def fake_edit(row_id, entry):
-        state["df"].loc[row_id] = entry.to_dict()
-
-    def fake_delete(row_id):
-        state["df"] = state["df"].drop(index=row_id).reset_index(drop=True)
-
-    def fake_patch(row_id, field, value):
-        state["df"].at[row_id, field] = value
-
-    def fake_bulk_delete(row_ids):
-        valid = [i for i in row_ids if i < len(state["df"])]
-        state["df"] = state["df"].drop(index=valid).reset_index(drop=True)
-
-    def fake_save(df):
-        state["df"] = df.reset_index(drop=True)
-
-    fakes = {
-        "load_data_from_gsheet":    fake_load,
-        "append_row_to_gsheet":     fake_append,
-        "edit_row_in_gsheet":       fake_edit,
-        "delete_row_in_gsheet":     fake_delete,
-        "patch_cell_in_gsheet":     fake_patch,
-        "bulk_delete_rows_in_gsheet": fake_bulk_delete,
-        "save_data_to_gsheet":      fake_save,
-        "_load_field_coords":       lambda: {},
-        "_delete_field_coord":      lambda name: None,
-        "load_polygons_from_sheet": lambda: [],
-        "save_polygon_to_sheet":    lambda uid, name, color, coords: None,
-        "delete_polygon_from_sheet": lambda uid: None,
-        "load_pins_from_sheet":     lambda: [],
-        "save_pin_to_sheet":        lambda uid, name, color, lat, lng: None,
-        "delete_pin_from_sheet":    lambda uid: None,
-        "load_rates_from_sheet":    fake_load_rates,
-        "save_rates_to_sheet":      fake_save_rates,
-        "load_passwords_from_sheet": lambda: {},
-        "save_passwords_to_sheet":  lambda web, worker: None,
-        "_invalidate_cache":        lambda: None,
-    }
-    for name, fake in fakes.items():
-        if hasattr(sheets_module, name):
-            monkeypatch.setattr(sheets_module, name, fake, raising=True)
-        if hasattr(app_module, name):
-            monkeypatch.setattr(app_module, name, fake, raising=True)
-
-    # gadash/service.py did `from gadash.sheets import append_row_to_gsheet`,
-    # which binds its own name in that module's namespace — patch it too.
-    monkeypatch.setattr(service_module, "append_row_to_gsheet", fake_append, raising=True)
-
-    # app.py's /api/dashboard cache is module-level global state that would
-    # otherwise leak between tests (e.g. an empty-data response cached by one
-    # test being served to a later test that seeded real rows).
-    monkeypatch.setattr(app_module, "_dashboard_cache", {}, raising=True)
-    monkeypatch.setattr(app_module, "_dashboard_cache_time", 0.0, raising=True)
-
-    return state
+@pytest.fixture
+def client(mock_gsheet):
+    app_module.app.config["TESTING"] = True
+    with app_module.app.test_client() as c:
+        with c.session_transaction() as sess:
+            sess["logged_in"] = True
+            sess["tenant_id"] = mock_gsheet.tenant_id
+            sess["manager_id"] = Manager.query.filter_by(tenant_id=mock_gsheet.tenant_id).first().id
+            sess["_csrf"]     = "test-csrf-token"
+        yield c

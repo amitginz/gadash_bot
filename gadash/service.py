@@ -1,8 +1,7 @@
-from gadash.sheets import append_row_to_gsheet
-from gadash.audit import _log_audit
+from gadash.db import append_work_entry, log_audit
 from gadash.models import WorkEntry
 
 
-def create_entry(entry: WorkEntry, actor: str):
-    append_row_to_gsheet(entry)
-    _log_audit("add", actor, f"{entry.client} | {entry.date} | {entry.task}")
+def create_entry(tenant_id: int, entry: WorkEntry, actor: str):
+    append_work_entry(tenant_id, entry)
+    log_audit(tenant_id, "add", actor, f"{entry.client} | {entry.date} | {entry.task}")

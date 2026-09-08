@@ -14,15 +14,8 @@ from app import app, WorkEntry, COLUMNS, VALID_TASKS
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
-
-@pytest.fixture
-def client():
-    app.config["TESTING"] = True
-    with app.test_client() as c:
-        with c.session_transaction() as sess:
-            sess["logged_in"] = True
-            sess["_csrf"]     = "test-csrf-token"
-        yield c
+# `client` (logged in as a manager, tenant already resolved) and `mock_gsheet`
+# (that tenant's seedable state) come from conftest.py.
 
 CSRF_HEADER = {"X-CSRFToken": "test-csrf-token"}
 
@@ -259,20 +252,22 @@ class TestFlaskRoutes:
             res = anon.get("/worker")
             assert res.status_code == 302
 
-    def test_worker_index_200(self):
+    def test_worker_index_200(self, mock_gsheet):
         with app.test_client() as c:
             with c.session_transaction() as sess:
                 sess["worker_logged_in"] = True
                 sess["worker_name"]      = "עובד בדיקה"
+                sess["tenant_id"]        = mock_gsheet.tenant_id
                 sess["_csrf"]            = "test-csrf-token"
             res = c.get("/worker")
             assert res.status_code == 200
 
-    def test_worker_post_invalid_entry(self):
+    def test_worker_post_invalid_entry(self, mock_gsheet):
         with app.test_client() as c:
             with c.session_transaction() as sess:
                 sess["worker_logged_in"] = True
                 sess["worker_name"]      = "עובד בדיקה"
+                sess["tenant_id"]        = mock_gsheet.tenant_id
                 sess["_csrf"]            = "test-csrf-token"
             res = c.post("/worker",
                          data={"שם לקוח": "", "תאריך": "2025-01-01", "עבודה": "חריש"},
@@ -288,16 +283,15 @@ class TestFlaskRoutes:
         assert res.status_code == 200
         assert res.is_json
 
-    def test_api_fields_save_pin(self, client, monkeypatch):
-        saved = {}
-        monkeypatch.setattr("app.save_pin_to_sheet", lambda uid, name, color, lat, lng: saved.update(
-            uid=uid, name=name, color=color, lat=lat, lng=lng))
+    def test_api_fields_save_pin(self, client, mock_gsheet):
+        from gadash.db import load_pins
         res = client.post("/api/fields", json={
             "uid": "u1", "name": "חלקה א", "type": "pin", "lat": 32.1, "lng": 35.1,
         }, headers=CSRF_HEADER)
         assert res.status_code == 200
         assert res.get_json()["ok"] is True
-        assert saved == {"uid": "u1", "name": "חלקה א", "color": "", "lat": 32.1, "lng": 35.1}
+        pins = load_pins(mock_gsheet.tenant_id)
+        assert pins == [{"uid": "u1", "name": "חלקה א", "color": "", "lat": 32.1, "lng": 35.1}]
 
     def test_api_fields_save_polygon_returns_area(self, client):
         # Roughly a 1km x 1km square near the equator's latitude scale → ~1000 dunam.
@@ -314,30 +308,12 @@ class TestFlaskRoutes:
         res = client.post("/api/fields", json={"uid": "u3", "name": "x"}, headers=CSRF_HEADER)
         assert res.status_code == 400
 
-    def test_api_fields_delete_by_uid(self, client, monkeypatch):
-        deleted = []
-        monkeypatch.setattr("app.delete_polygon_from_sheet", lambda uid: deleted.append(("poly", uid)))
-        monkeypatch.setattr("app.delete_pin_from_sheet", lambda uid: deleted.append(("pin", uid)))
+    def test_api_fields_delete_by_uid(self, client, mock_gsheet):
+        from gadash.db import load_pins, save_pin
+        save_pin(mock_gsheet.tenant_id, "u1", "חלקה א", "", 32.1, 35.1)
         res = client.delete("/api/fields/u1", headers=CSRF_HEADER)
         assert res.status_code == 200
-        assert ("poly", "u1") in deleted and ("pin", "u1") in deleted
-
-    def test_api_fields_delete_legacy_uid_hits_field_coords(self, client, monkeypatch):
-        deleted = []
-        monkeypatch.setattr("app._delete_field_coord", lambda name: deleted.append(name))
-        res = client.delete("/api/fields/legacy:חלקה ישנה", headers=CSRF_HEADER)
-        assert res.status_code == 200
-        assert deleted == ["חלקה ישנה"]
-
-    def test_api_fields_migrates_legacy_coords(self, client, monkeypatch):
-        # A pin saved via the pre-Polygons/Pins-sheets "FieldCoords" mechanism
-        # must still show up on the map, tagged with a legacy: uid.
-        monkeypatch.setattr("app._load_field_coords", lambda: {"חלקה ישנה": {"lat": 32.0, "lng": 35.0}})
-        res = client.get("/api/fields")
-        data = res.get_json()
-        legacy = next(f for f in data if f["name"] == "חלקה ישנה")
-        assert legacy["uid"] == "legacy:חלקה ישנה"
-        assert legacy["lat"] == 32.0 and legacy["lng"] == 35.0
+        assert load_pins(mock_gsheet.tenant_id) == []
 
 
 # ── Sheet mutation routes (row_id addressing) ──────────────────────────────────
@@ -356,20 +332,23 @@ class TestSheetMutations:
             WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
             WorkEntry(client="לקוח ב", date="2025-06-02", task="קציר", entered_by="Web").to_dict(),
         ])
-        res = client.post("/edit/1", data={
+        df = mock_gsheet["df"]
+        id_a = int(df[df["שם לקוח"] == "לקוח א"].iloc[0]["_row_id"])
+        id_b = int(df[df["שם לקוח"] == "לקוח ב"].iloc[0]["_row_id"])
+        res = client.post(f"/edit/{id_b}", data={
             "שם לקוח": "לקוח ב מעודכן", "תאריך": "2025-06-02", "עבודה": "ריסוס",
         }, headers=CSRF_HEADER)
         assert res.status_code == 302
         df = mock_gsheet["df"]
-        assert df.at[0, "שם לקוח"] == "לקוח א"          # untouched
-        assert df.at[1, "שם לקוח"] == "לקוח ב מעודכן"    # updated
-        assert df.at[1, "עבודה"] == "ריסוס"
+        assert df[df["_row_id"] == id_a].iloc[0]["שם לקוח"] == "לקוח א"           # untouched
+        assert df[df["_row_id"] == id_b].iloc[0]["שם לקוח"] == "לקוח ב מעודכן"    # updated
+        assert df[df["_row_id"] == id_b].iloc[0]["עבודה"] == "ריסוס"
 
     def test_edit_out_of_range_row_does_not_crash(self, client, mock_gsheet):
         self._seed(mock_gsheet, [
             WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
         ])
-        res = client.post("/edit/5", data={
+        res = client.post("/edit/999999999", data={
             "שם לקוח": "משהו", "תאריך": "2025-06-02", "עבודה": "ריסוס",
         }, headers=CSRF_HEADER)
         assert res.status_code == 302
@@ -380,20 +359,23 @@ class TestSheetMutations:
             WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
             WorkEntry(client="לקוח ב", date="2025-06-02", task="קציר", entered_by="Web").to_dict(),
         ])
-        res = client.post("/delete/0", headers=CSRF_HEADER)
+        df = mock_gsheet["df"]
+        id_a = int(df[df["שם לקוח"] == "לקוח א"].iloc[0]["_row_id"])
+        res = client.post(f"/delete/{id_a}", headers=CSRF_HEADER)
         assert res.status_code == 302
         df = mock_gsheet["df"]
         assert len(df) == 1
-        assert df.at[0, "שם לקוח"] == "לקוח ב"
+        assert df.iloc[0]["שם לקוח"] == "לקוח ב"
 
     def test_patch_cell_updates_correct_field(self, client, mock_gsheet):
         self._seed(mock_gsheet, [
             WorkEntry(client="לקוח א", date="2025-06-01", task="חריש", entered_by="Web").to_dict(),
         ])
-        res = client.patch("/api/entries/0", json={"field": "שעות", "value": "7.5"},
+        row_id = int(mock_gsheet["df"].iloc[0]["_row_id"])
+        res = client.patch(f"/api/entries/{row_id}", json={"field": "שעות", "value": "7.5"},
                             headers=CSRF_HEADER, content_type="application/json")
         assert res.status_code == 200
-        assert mock_gsheet["df"].at[0, "שעות"] == "7.5"
+        assert mock_gsheet["df"].iloc[0]["שעות"] == "7.5"
 
     def test_dashboard_reflects_seeded_data(self, client, mock_gsheet):
         self._seed(mock_gsheet, [
@@ -574,9 +556,10 @@ class TestSecurity:
             assert res.status_code == 200
             assert "ניסיונות" in res.data.decode("utf-8") or "המתן" in res.data.decode("utf-8")
 
-    def test_manager_password_hashed_in_memory(self):
-        from app import _current_password_hash
-        assert _is_hashed(_current_password_hash)
+    def test_manager_password_hashed_in_db(self, mock_gsheet):
+        from gadash.models_db import Manager
+        manager = Manager.query.filter_by(tenant_id=mock_gsheet.tenant_id).first()
+        assert _is_hashed(manager.password_hash)
 
     def test_search_regex_injection_safe(self, client):
         # A raw regex string should not crash the server
@@ -618,10 +601,10 @@ class TestBotModule:
         assert isinstance(MENU_KEYBOARD, list)
         assert ["כן", "לא"] in CONFIRM_KEYBOARD
 
-    def test_recent_clients_markup_returns_markup_or_remove(self):
+    def test_recent_clients_markup_returns_markup_or_remove(self, mock_gsheet):
         from gadash.bot import _recent_clients_markup
         from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
-        result = _recent_clients_markup()
+        result = _recent_clients_markup(mock_gsheet.tenant_id)
         assert isinstance(result, (ReplyKeyboardMarkup, ReplyKeyboardRemove))
 
 
@@ -685,15 +668,18 @@ class TestVoiceEntry:
         src = inspect.getsource(bot_module.start_telegram_bot)
         assert "voice_entry" in src
 
-    def test_voice_entry_full_handler_with_mocked_telegram_and_gemini(self, monkeypatch):
+    def test_voice_entry_full_handler_with_mocked_telegram_and_gemini(self, monkeypatch, mock_gsheet):
         # Drives the actual async handler (not just the pure helpers) through a
         # fake Telegram Update and a fake Gemini response, since there's no real
         # BOT_TOKEN/GEMINI_API_KEY available to hit the live APIs from here.
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+        _add_worker(mock_gsheet.tenant_id, "בודק קולי", "pw12345")
+        _link_worker_telegram(mock_gsheet.tenant_id, "בודק קולי", 999999)
 
         fake_response = MagicMock()
         fake_response.text = json.dumps({
@@ -741,12 +727,15 @@ class TestVoiceEntry:
         assert "איתמר" in processing_msg.edit_text.call_args[0][0]
         assert message.reply_text.await_count == 2  # "מקשיב..." + confirm-keyboard prompt
 
-    def test_voice_entry_no_client_name_stays_on_menu(self, monkeypatch):
+    def test_voice_entry_no_client_name_stays_on_menu(self, monkeypatch, mock_gsheet):
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+        _add_worker(mock_gsheet.tenant_id, "בודק קולי", "pw12345")
+        _link_worker_telegram(mock_gsheet.tenant_id, "בודק קולי", 999999)
 
         fake_response = MagicMock()
         fake_response.text = json.dumps({"שם לקוח": "", "עבודה": "חריש"})
@@ -775,15 +764,20 @@ class TestVoiceEntry:
         result_state = asyncio.run(bot_module.voice_entry(update, context))
 
         assert result_state == bot_module.MENU
-        assert context.user_data == {}  # never populated — nothing to confirm/save
+        # Only the tenant/worker bookkeeping is set — no WorkEntry field made
+        # it in, since there was nothing to confirm/save.
+        assert set(context.user_data.keys()) == {"_tenant_id", "_worker_name"}
         assert "לקוח" in processing_msg.edit_text.call_args[0][0]
 
-    def test_voice_entry_gemini_error_falls_back_gracefully(self, monkeypatch):
+    def test_voice_entry_gemini_error_falls_back_gracefully(self, monkeypatch, mock_gsheet):
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+        _add_worker(mock_gsheet.tenant_id, "בודק קולי", "pw12345")
+        _link_worker_telegram(mock_gsheet.tenant_id, "בודק קולי", 999999)
 
         fake_model = MagicMock()
         fake_model.generate_content.side_effect = RuntimeError("network blip")

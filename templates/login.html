@@ -85,8 +85,10 @@
     body.worker-mode .btn-login { background: #1e4d2b; }
     .btn-login:hover { opacity: .88; }
 
-    #nameField { display: none; }
-    body.worker-mode #nameField { display: block; }
+    #nameField, #slugField { display: none; }
+    body.worker-mode #nameField, body.worker-mode #slugField { display: block; }
+    #usernameField { display: block; }
+    body.worker-mode #usernameField { display: none; }
   </style>
 </head>
 <body id="loginBody">
@@ -113,6 +115,18 @@
 
     <form method="POST" class="text-start">
       <input type="hidden" name="role" id="roleInput" value="{{ selected_role or 'manager' }}" />
+
+      <div id="usernameField" class="mb-3">
+        <label class="form-label">שם משתמש</label>
+        <input type="text" name="username" id="usernameInput" class="form-control"
+               placeholder="שם המשתמש שלך" value="{{ form_username or '' }}" />
+      </div>
+
+      <div id="slugField" class="mb-3">
+        <label class="form-label">קוד חברה</label>
+        <input type="text" name="tenant_slug" id="slugInput" class="form-control"
+               placeholder="הקוד שקיבלת מהמנהל" value="{{ form_slug or '' }}" />
+      </div>
 
       <div id="nameField" class="mb-3">
         <label class="form-label">שם העובד</label>
@@ -143,11 +157,15 @@
         bm.className = 'role-btn';
         bw.className = 'role-btn active-worker';
         document.getElementById('nameInput').required = true;
+        document.getElementById('slugInput').required = true;
+        document.getElementById('usernameInput').required = false;
       } else {
         body.classList.remove('worker-mode');
         bm.className = 'role-btn active-manager';
         bw.className = 'role-btn';
         document.getElementById('nameInput').required = false;
+        document.getElementById('slugInput').required = false;
+        document.getElementById('usernameInput').required = true;
       }
     }
 

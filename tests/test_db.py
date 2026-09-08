@@ -10,38 +10,38 @@ the postgres service in .github/workflows/tests.yml).
 import os
 
 import pytest
-from flask import Flask
 
 os.environ.setdefault("DATABASE_URL", "postgresql:///gadash_test")
 
+import app as app_module
 from gadash import db as gdb
 from gadash.models import WorkEntry
 from gadash.models_db import Tenant, db
 
-
-@pytest.fixture(scope="module")
+# Reuses app.py's own Flask app/db binding (already wired up in app.py, and
+# schema-created/cleaned per-test by conftest.py's autouse mock_gsheet
+# fixture) instead of standing up a second Flask app on the same db — two
+# apps sharing one SQLAlchemy singleton was causing cross-context errors.
+@pytest.fixture
 def app_ctx():
-    app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = (
-        os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1)
-    )
-    db.init_app(app)
-    with app.app_context():
-        db.create_all()
-        yield app
-        db.drop_all()
+    return app_module.app
 
 
 @pytest.fixture
-def tenants(app_ctx):
+def tenants(mock_gsheet, app_ctx):
     """A clean pair of tenants for every test, so cross-tenant isolation is
-    always exercised, not just assumed."""
+    always exercised, not just assumed. Depends on mock_gsheet (autouse
+    already, but named here too for clarity) since it's what resets the
+    tables and pushes the app context this fixture runs inside of."""
     with app_ctx.app_context():
-        for model in [gdb.WorkEntryRow, gdb.Field, gdb.Rate, gdb.AuditLogEntry, gdb.Subscriber, Tenant]:
+        # Child rows (e.g. the manager mock_gsheet just created) must go
+        # before Tenant — there's no ON DELETE CASCADE on these FKs.
+        from gadash.models_db import Manager, Worker
+        for model in [gdb.WorkEntryRow, gdb.Field, gdb.Rate, gdb.AuditLogEntry, gdb.Subscriber, Worker, Manager, Tenant]:
             model.query.delete()
         db.session.commit()
-        t1 = Tenant(name="קבלן א")
-        t2 = Tenant(name="קבלן ב")
+        t1 = Tenant(name="קבלן א", slug="tenant-a")
+        t2 = Tenant(name="קבלן ב", slug="tenant-b")
         db.session.add_all([t1, t2])
         db.session.commit()
         yield t1.id, t2.id

@@ -11,6 +11,7 @@ from functools import wraps
 from io import BytesIO
 from urllib.parse import urlencode
 
+import click
 import pandas as pd
 from dotenv import load_dotenv
 from flask import (Flask, flash, jsonify, redirect, render_template,
@@ -30,26 +31,25 @@ except ImportError:
     _genai = None
 
 import gadash.bot as _bot_module
-from gadash.audit import _flush_audit_to_sheets, _log_audit, _read_audit_log
+from gadash.auth import change_manager_password, change_worker_password, verify_manager, verify_worker
 from gadash.bot import start_telegram_bot
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.service import create_entry
-from gadash.sheets import (
-    _invalidate_cache, _delete_field_coord, _load_field_coords,
-    append_row_to_gsheet, bulk_delete_rows_in_gsheet,
-    calculate_polygon_dunam_area, delete_polygon_from_sheet, delete_pin_from_sheet,
-    delete_row_in_gsheet, edit_row_in_gsheet,
-    load_data_from_gsheet, load_passwords_from_sheet, load_pins_from_sheet,
-    load_polygons_from_sheet, load_rates_from_sheet,
-    patch_cell_in_gsheet, save_data_to_gsheet, save_pin_to_sheet,
-    save_polygon_to_sheet, save_passwords_to_sheet, save_rates_to_sheet,
+from gadash.db import (
+    append_work_entry, bulk_delete_work_entries, bulk_insert_work_entries,
+    calculate_polygon_dunam_area, delete_field,
+    delete_work_entry, edit_work_entry,
+    load_pins, load_polygons, load_rates, load_work_entries,
+    log_audit, patch_work_entry_cell, read_audit_log,
+    save_pin, save_polygon, save_rates,
 )
 from gadash.workers import (
     _add_worker, _delete_worker, _load_workers,
     _verify_worker,
 )
+from gadash.tenancy import current_tenant_id
 from flask_migrate import Migrate
-from gadash.models_db import db
+from gadash.models_db import Manager, db
 
 PAGE_SIZE = 50
 _MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -70,29 +70,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
 ).replace("postgres://", "postgresql://", 1)  # Heroku/Fly-style URLs use the old scheme name
 db.init_app(app)
 migrate = Migrate(app, db)
-
-
-def _is_pw_hash(s: str) -> bool:
-    return s.startswith(("pbkdf2:", "scrypt:", "argon2:"))
-
-
-_current_password_hash: str = ""
-_worker_password: str = os.environ.get("WORKER_PASSWORD", "worker2025")
-
-_raw_web = os.environ.get("WEB_PASSWORD", "gadash2025")
-try:
-    saved = load_passwords_from_sheet()
-    if saved.get("web_password"):
-        _raw_web = saved["web_password"]
-    if saved.get("worker_password"):
-        _worker_password = saved["worker_password"]
-except Exception:
-    pass
-
-_current_password_hash = _raw_web if _is_pw_hash(_raw_web) else generate_password_hash(_raw_web)
-
-if check_password_hash(_current_password_hash, "gadash2025"):
-    _logger.warning("[SECURITY] Manager is using the default password 'gadash2025' — change it immediately!")
 
 
 def _get_csrf_token() -> str:
@@ -180,28 +157,32 @@ def login():
         pwd  = request.form.get("password", "")
         if role == "worker":
             name = request.form.get("name", "").strip() or "עובד"
-            workers = _load_workers()
-            if workers:
-                ok = _verify_worker(name, pwd)
-            else:
-                ok = (pwd == _worker_password)
-            if ok:
+            slug = request.form.get("tenant_slug", "").strip()
+            result = verify_worker(slug, name, pwd)
+            if result:
+                tenant_id, worker_name = result
                 session.permanent = True
                 session["worker_logged_in"] = True
-                session["worker_name"]      = name
+                session["worker_name"]      = worker_name
+                session["tenant_id"]        = tenant_id
                 return redirect(url_for("worker_index"))
             _record_attempt(ip)
-            flash("שם עובד או סיסמה שגויים ❌", "danger")
-            return render_template("login.html", selected_role="worker", form_name=name)
+            flash("קוד חברה, שם עובד או סיסמה שגויים ❌", "danger")
+            return render_template("login.html", selected_role="worker", form_name=name, form_slug=slug)
         else:
-            if check_password_hash(_current_password_hash, pwd):
+            username = request.form.get("username", "").strip()
+            result = verify_manager(username, pwd)
+            if result is not None:
+                tenant_id, manager_id = result
                 session.permanent = True
                 session["logged_in"] = True
+                session["tenant_id"] = tenant_id
+                session["manager_id"] = manager_id
                 return redirect(url_for("index"))
             _record_attempt(ip)
             remaining = _LOGIN_MAX - len(_login_attempts.get(ip, []))
-            flash(f"סיסמה שגויה ❌ ({remaining} ניסיונות נותרו)", "danger")
-            return render_template("login.html", selected_role="manager")
+            flash(f"שם משתמש או סיסמה שגויים ❌ ({remaining} ניסיונות נותרו)", "danger")
+            return render_template("login.html", selected_role="manager", form_username=username)
     return render_template("login.html", selected_role="manager")
 
 
@@ -213,31 +194,27 @@ def logout():
 
 @app.route("/health")
 def health():
-    from gadash.sheets import _get_sheet
     try:
-        _get_sheet()
-        return jsonify({"status": "ok", "sheets": "connected"})
+        db.session.execute(db.select(1))
+        return jsonify({"status": "ok", "database": "connected"})
     except Exception as e:
-        return jsonify({"status": "degraded", "sheets": str(e)}), 503
+        return jsonify({"status": "degraded", "database": str(e)}), 503
 
 
 @app.route("/change-password", methods=["GET", "POST"])
 @login_required
 def change_password():
-    global _current_password_hash
     if request.method == "POST":
         old  = request.form.get("old_password", "")
         new1 = request.form.get("new_password", "")
         new2 = request.form.get("confirm_password", "")
-        if not check_password_hash(_current_password_hash, old):
-            flash("הסיסמה הנוכחית שגויה ❌", "danger")
-        elif new1 != new2:
+        if new1 != new2:
             flash("הסיסמאות החדשות אינן תואמות ❌", "danger")
         elif len(new1) < 4:
             flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
+        elif not change_manager_password(session["manager_id"], old, new1):
+            flash("הסיסמה הנוכחית שגויה ❌", "danger")
         else:
-            _current_password_hash = generate_password_hash(new1)
-            save_passwords_to_sheet(_current_password_hash, _worker_password)
             flash("הסיסמה שונתה בהצלחה ✅", "success")
     return render_template("change_password.html")
 
@@ -285,14 +262,14 @@ def _autocomplete_lists(df: pd.DataFrame) -> dict:
 @login_required
 def index():
     try:
-        df = load_data_from_gsheet()
+        tenant_id = current_tenant_id()
+        df = load_work_entries(tenant_id)
         total_count  = len(df)
         month_prefix = date.today().strftime("%Y-%m")
         month_count  = int(df["תאריך"].str.startswith(month_prefix).sum()) if total_count else 0
         top_client   = df["שם לקוח"].mode()[0] if total_count else "—"
         top_task     = df["עבודה"].mode()[0] if total_count else "—"
 
-        df = df.reset_index().rename(columns={"index": "_row_id"})
         df = df.sort_values(by="תאריך", ascending=False)
         df = _apply_filters(df)
 
@@ -302,7 +279,7 @@ def index():
         page           = max(1, min(page, total_pages))
         df             = df.iloc[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
 
-        full_df       = load_data_from_gsheet()
+        full_df       = load_work_entries(tenant_id)
         task_counts   = full_df["עבודה"].value_counts().to_dict()
         client_counts = full_df["שם לקוח"].value_counts().head(6).to_dict()
         auto          = _autocomplete_lists(full_df)
@@ -350,7 +327,7 @@ def add():
     if request.method == "POST":
         try:
             entry = WorkEntry.from_form(request.form, entered_by="Web")
-            create_entry(entry, "Web")
+            create_entry(current_tenant_id(), entry, "Web")
             flash("הרשומה נוספה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except ValueError as e:
@@ -362,7 +339,7 @@ def add():
         prefill["תאריך"] = today
     lists = {}
     try:
-        lists = _autocomplete_lists(load_data_from_gsheet())
+        lists = _autocomplete_lists(load_work_entries(current_tenant_id()))
     except Exception:
         pass
     return render_template("add.html", today=today, prefill=prefill, **lists)
@@ -372,10 +349,10 @@ def add():
 @login_required
 def duplicate(row_id):
     try:
-        df  = load_data_from_gsheet()
-        row = df.iloc[row_id].to_dict()
+        df  = load_work_entries(current_tenant_id())
+        row = df[df["_row_id"] == row_id].iloc[0].to_dict()
         row["תאריך"] = date.today().strftime("%Y-%m-%d")
-        qs = urlencode({k: v for k, v in row.items() if k != "מזין"})
+        qs = urlencode({k: v for k, v in row.items() if k not in ("מזין", "_row_id")})
         return redirect(f"/add?{qs}")
     except Exception:
         return redirect(url_for("add"))
@@ -384,34 +361,32 @@ def duplicate(row_id):
 @app.route("/edit/<int:row_id>", methods=["GET", "POST"])
 @login_required
 def edit(row_id):
-    df = load_data_from_gsheet()
+    tenant_id = current_tenant_id()
+    df = load_work_entries(tenant_id)
+    match = df[df["_row_id"] == row_id]
     if request.method == "POST":
         try:
-            # Re-read uncached right before the positional write: row_id is an index
-            # into the sheet, so a stale cache could mean this now points at a
-            # different (or deleted) row if someone else edited concurrently.
-            fresh_df = load_data_from_gsheet(force_refresh=True)
-            if row_id >= len(fresh_df):
+            if match.empty:
                 flash("הרשומה כבר לא קיימת — ייתכן שנמחקה על ידי משתמש אחר ❌", "danger")
                 return redirect(url_for("index"))
-            original_entered_by = fresh_df.at[row_id, "מזין"]
+            original_entered_by = match.iloc[0]["מזין"]
             entry = WorkEntry.from_form(request.form, entered_by=original_entered_by)
-            edit_row_in_gsheet(row_id, entry)
-            _log_audit("edit", "Web", f"row {row_id}: {entry.client} | {entry.date}")
+            edit_work_entry(tenant_id, row_id, entry)
+            log_audit(tenant_id, "edit", "Web", f"row {row_id}: {entry.client} | {entry.date}")
             flash("הרשומה עודכנה בהצלחה ✅", "success")
             return redirect(url_for("index"))
         except ValueError as e:
             flash(f"שגיאת אימות: {e} ❌", "danger")
             try:
                 lists = _autocomplete_lists(df)
-                return render_template("edit.html", row=df.iloc[row_id].to_dict(), row_id=row_id, **lists)
+                return render_template("edit.html", row=match.iloc[0].to_dict(), row_id=row_id, **lists)
             except Exception:
                 pass
         except Exception as e:
             flash(f"שגיאה בעדכון: {e} ❌", "danger")
     try:
         lists = _autocomplete_lists(df)
-        return render_template("edit.html", row=df.iloc[row_id].to_dict(), row_id=row_id, **lists)
+        return render_template("edit.html", row=match.iloc[0].to_dict(), row_id=row_id, **lists)
     except Exception as e:
         return f"שגיאה בטעינת שורה: {e}"
 
@@ -419,14 +394,16 @@ def edit(row_id):
 @app.route("/delete/<int:row_id>", methods=["POST"])
 @login_required
 def delete(row_id):
+    tenant_id = current_tenant_id()
     try:
-        df = load_data_from_gsheet(force_refresh=True)
-        if row_id >= len(df):
+        df = load_work_entries(tenant_id)
+        match = df[df["_row_id"] == row_id]
+        if match.empty:
             flash("הרשומה כבר לא קיימת — ייתכן שנמחקה על ידי משתמש אחר ⚠️", "warning")
             return redirect(url_for("index"))
-        detail = df.iloc[row_id].get("שם לקוח", str(row_id))
-        delete_row_in_gsheet(row_id)
-        _log_audit("delete", "Web", f"row {row_id}: {detail}")
+        detail = match.iloc[0].get("שם לקוח", str(row_id))
+        delete_work_entry(tenant_id, row_id)
+        log_audit(tenant_id, "delete", "Web", f"row {row_id}: {detail}")
         flash("הרשומה נמחקה ✅", "success")
     except Exception as e:
         flash(f"שגיאה במחיקה: {e} ❌", "danger")
@@ -436,12 +413,13 @@ def delete(row_id):
 @app.route("/bulk-delete", methods=["POST"])
 @login_required
 def bulk_delete():
+    tenant_id = current_tenant_id()
     row_ids = [int(r) for r in request.form.getlist("row_ids")]
     if not row_ids:
         flash("לא נבחרו רשומות ⚠️", "warning")
         return redirect(url_for("index"))
-    bulk_delete_rows_in_gsheet(row_ids)
-    _log_audit("bulk-delete", "Web", f"{len(row_ids)} rows: {row_ids}")
+    bulk_delete_work_entries(tenant_id, row_ids)
+    log_audit(tenant_id, "bulk-delete", "Web", f"{len(row_ids)} rows: {row_ids}")
     flash(f"{len(row_ids)} רשומות נמחקו ✅", "success")
     return redirect(url_for("index"))
 
@@ -450,7 +428,7 @@ def bulk_delete():
 @login_required
 def summary():
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         if df.empty:
             return render_template("summary.html", monthly=[], client_totals=[], task_types=[])
         df["חודש"] = pd.to_datetime(df["תאריך"], errors="coerce").dt.strftime("%Y-%m")
@@ -473,14 +451,14 @@ def summary():
 @app.route("/audit")
 @login_required
 def audit():
-    entries = _read_audit_log(200)
+    entries = read_audit_log(current_tenant_id(), 200)
     return render_template("audit.html", entries=entries)
 
 
 @app.route("/print")
 @login_required
 def print_report():
-    df = load_data_from_gsheet()
+    df = load_work_entries(current_tenant_id())
     df = _apply_filters(df)
     return render_template(
         "print_report.html",
@@ -497,6 +475,7 @@ def print_report():
 @login_required
 def import_data():
     if request.method == "POST":
+        tenant_id = current_tenant_id()
         file = request.files.get("file")
         if file and file.filename.endswith(".xlsx"):
             file.seek(0, 2)
@@ -512,36 +491,29 @@ def import_data():
                     # "YYYY-MM-DD" strings, which WorkEntry's date validation requires.
                     raw_df["תאריך"] = pd.to_datetime(raw_df["תאריך"], errors="coerce").dt.strftime("%Y-%m-%d")
                 raw_df = raw_df.fillna("")
-                valid_rows, invalid_count = [], 0
+                valid_entries, invalid_count = [], 0
                 for _, row in raw_df.iterrows():
                     try:
-                        valid_rows.append(WorkEntry.from_dict(row.to_dict()).to_dict())
+                        valid_entries.append(WorkEntry.from_dict(row.to_dict()))
                     except ValueError:
                         invalid_count += 1
-                new_df = pd.DataFrame(valid_rows, columns=COLUMNS) if valid_rows else pd.DataFrame(columns=COLUMNS)
                 if invalid_count:
                     flash(f"⚠️ {invalid_count} שורות לא תקינות דולגו (תאריך/סוג עבודה/לקוח חסר)", "warning")
-                existing_df = load_data_from_gsheet()
+                existing_df = load_work_entries(tenant_id)
                 key_cols = ["שם לקוח", "תאריך", "עבודה", "שם חלקה"]
-                skipped = 0
-                if not existing_df.empty:
-                    existing_keys = set(
-                        tuple(str(v) for v in row)
-                        for row in existing_df[key_cols].values.tolist()
-                    )
-                    unique_rows, skip_rows = [], []
-                    for _, row in new_df.iterrows():
-                        key = tuple(str(row.get(c, "")) for c in key_cols)
-                        (skip_rows if key in existing_keys else unique_rows).append(row)
-                    skipped = len(skip_rows)
-                    new_df = pd.DataFrame(unique_rows, columns=new_df.columns) if unique_rows else pd.DataFrame()
+                existing_keys = set(
+                    tuple(str(v) for v in row)
+                    for row in existing_df[key_cols].values.tolist()
+                ) if not existing_df.empty else set()
+                new_entries = [e for e in valid_entries
+                               if (e.client, e.date, e.task, e.field_name) not in existing_keys]
+                skipped = len(valid_entries) - len(new_entries)
                 if skipped:
                     flash(f"⚠️ {skipped} שורות כפולות דולגו", "warning")
-                if not new_df.empty:
-                    combined = pd.concat([existing_df, new_df], ignore_index=True) if not existing_df.empty else new_df
-                    save_data_to_gsheet(combined)
-                    _log_audit("import", "Web", f"{len(new_df)} rows imported, {skipped} skipped")
-                    flash(f"{len(new_df)} שורות יובאו בהצלחה ✅", "success")
+                if new_entries:
+                    bulk_insert_work_entries(tenant_id, new_entries)
+                    log_audit(tenant_id, "import", "Web", f"{len(new_entries)} rows imported, {skipped} skipped")
+                    flash(f"{len(new_entries)} שורות יובאו בהצלחה ✅", "success")
                     return redirect(url_for("index"))
                 else:
                     flash("כל השורות בקובץ כבר קיימות ⚠️", "warning")
@@ -555,7 +527,7 @@ def import_data():
 @app.route("/export")
 @login_required
 def export():
-    df = load_data_from_gsheet()
+    df = load_work_entries(current_tenant_id())
     if df.empty:
         flash("אין נתונים לייצוא ❌", "danger")
         return redirect(url_for("index"))
@@ -571,7 +543,7 @@ def export():
 @app.route("/export/csv")
 @login_required
 def export_csv():
-    df = load_data_from_gsheet()
+    df = load_work_entries(current_tenant_id())
     if df.empty:
         flash("אין נתונים לייצוא ❌", "danger")
         return redirect(url_for("index"))
@@ -594,7 +566,7 @@ def api_docs():
 @app.route("/api/entries")
 @login_required
 def api_entries():
-    df = load_data_from_gsheet()
+    df = load_work_entries(current_tenant_id())
     df = _apply_filters(df)
     return jsonify(df.fillna("").to_dict(orient="records"))
 
@@ -602,17 +574,18 @@ def api_entries():
 @app.route("/api/entries/<int:row_id>", methods=["PATCH"])
 @login_required
 def api_patch_entry(row_id):
+    tenant_id = current_tenant_id()
     data  = request.get_json(force=True, silent=True) or {}
     field = data.get("field", "")
     value = str(data.get("value", ""))
     editable = [c for c in COLUMNS if c != "מזין"]
     if field not in editable:
         return jsonify({"error": f"שדה לא תקין: {field}"}), 400
-    df = load_data_from_gsheet(force_refresh=True)
-    if row_id >= len(df):
+    try:
+        patch_work_entry_cell(tenant_id, row_id, field, value)
+    except ValueError:
         return jsonify({"error": "שורה לא קיימת"}), 404
-    patch_cell_in_gsheet(row_id, field, value)
-    _log_audit("edit-inline", "Web", f"row {row_id}: {field}={value}")
+    log_audit(tenant_id, "edit-inline", "Web", f"row {row_id}: {field}={value}")
     return jsonify({"ok": True, "row_id": row_id, "field": field, "value": value})
 
 
@@ -621,6 +594,7 @@ def api_patch_entry(row_id):
 @app.route("/workers", methods=["GET", "POST"])
 @login_required
 def manage_workers():
+    tenant_id = current_tenant_id()
     if request.method == "POST":
         name = request.form.get("name", "").strip()
         pwd  = request.form.get("password", "").strip()
@@ -628,29 +602,22 @@ def manage_workers():
             flash("שם וסיסמה הם שדות חובה ❌", "danger")
         elif len(pwd) < 4:
             flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
-        elif not _add_worker(name, pwd):
+        elif not _add_worker(tenant_id, name, pwd):
             flash(f"עובד בשם '{name}' כבר קיים ❌", "danger")
         else:
             flash(f"עובד '{name}' נוסף בהצלחה ✅", "success")
         return redirect(url_for("manage_workers"))
-    return render_template("workers.html", workers=_load_workers())
+    return render_template("workers.html", workers=_load_workers(tenant_id))
 
 
 @app.route("/workers/delete/<name>", methods=["POST"])
 @login_required
 def delete_worker(name):
-    if _delete_worker(name):
+    if _delete_worker(current_tenant_id(), name):
         flash(f"עובד '{name}' נמחק ✅", "success")
     else:
         flash(f"עובד '{name}' לא נמצא ❌", "danger")
     return redirect(url_for("manage_workers"))
-
-
-@app.route("/api/cache/invalidate", methods=["POST"])
-@login_required
-def api_cache_invalidate():
-    _invalidate_cache()
-    return jsonify({"ok": True})
 
 
 @app.route("/webhook/<token>", methods=["POST"])
@@ -685,19 +652,16 @@ def worker_logout():
 @app.route("/worker/change-password", methods=["POST"])
 @worker_required
 def worker_change_password():
-    global _worker_password
     old  = request.form.get("old_password", "")
     new1 = request.form.get("new_password", "")
     new2 = request.form.get("confirm_password", "")
-    if old != _worker_password:
-        flash("הסיסמה הנוכחית שגויה ❌", "danger")
-    elif new1 != new2:
+    if new1 != new2:
         flash("הסיסמאות החדשות אינן תואמות ❌", "danger")
     elif len(new1) < 4:
         flash("הסיסמה חייבת לכלול לפחות 4 תווים ❌", "danger")
+    elif not change_worker_password(current_tenant_id(), session["worker_name"], old, new1):
+        flash("הסיסמה הנוכחית שגויה ❌", "danger")
     else:
-        _worker_password = new1
-        save_passwords_to_sheet(_current_password_hash, _worker_password)
         flash("הסיסמה שונתה בהצלחה ✅", "success")
     return redirect(url_for("worker_index"))
 
@@ -705,18 +669,19 @@ def worker_change_password():
 @app.route("/worker/undo-last", methods=["POST"])
 @worker_required
 def worker_undo_last():
+    tenant_id   = current_tenant_id()
     worker_name = session.get("worker_name", "")
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(tenant_id)
         my = df[df["מזין"].str.strip().str.casefold() == worker_name.strip().casefold()]
         if my.empty:
             flash("אין עבודות למחיקה ❌", "danger")
             return redirect(url_for("worker_index"))
-        last_idx    = my.index[-1]
+        last_row_id = int(my.iloc[-1]["_row_id"])
         last_client = str(my.iloc[-1].get("שם לקוח", ""))
         last_date   = str(my.iloc[-1].get("תאריך", ""))
-        delete_row_in_gsheet(last_idx)
-        _log_audit("worker-undo", worker_name, f"row {last_idx}: {last_client} | {last_date}")
+        delete_work_entry(tenant_id, last_row_id)
+        log_audit(tenant_id, "worker-undo", worker_name, f"row {last_row_id}: {last_client} | {last_date}")
         flash(f"הרשומה האחרונה נמחקה ✅ ({last_client} | {last_date})", "success")
     except Exception as e:
         flash(f"שגיאה: {e} ❌", "danger")
@@ -727,17 +692,18 @@ def worker_undo_last():
 @worker_required
 def worker_index():
     worker_name = session.get("worker_name", "עובד")
+    tenant_id = current_tenant_id()
     today = date.today().strftime("%Y-%m-%d")
     lists = {}
     try:
-        lists = _autocomplete_lists(load_data_from_gsheet())
+        lists = _autocomplete_lists(load_work_entries(tenant_id))
     except Exception:
         pass
 
     if request.method == "POST":
         try:
             entry = WorkEntry.from_form(request.form, entered_by=worker_name)
-            create_entry(entry, worker_name)
+            create_entry(tenant_id, entry, worker_name)
             flash("הרשומה נוספה בהצלחה ✅", "success")
         except ValueError as e:
             flash(f"שגיאת אימות: {e} ❌", "danger")
@@ -746,7 +712,7 @@ def worker_index():
         return redirect(url_for("worker_index"))
 
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(tenant_id)
         my_df = df[df["מזין"].str.strip().str.casefold() == worker_name.strip().casefold()]
         recent = my_df.tail(20).sort_values("תאריך", ascending=False).to_dict(orient="records")
         my_count = len(my_df)
@@ -769,7 +735,7 @@ def client_report():
     date_from   = request.args.get("date_from", "").strip()
     date_to     = request.args.get("date_to", "").strip()
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         auto = _autocomplete_lists(df)
         if not client_name:
             return render_template("client_report.html", client_name="", records=[],
@@ -840,7 +806,7 @@ def client_billing_summary():
     if not client_name:
         return redirect(url_for("client_report"))
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         cdf = df[df["שם לקוח"].str.contains(client_name, case=False, na=False)].copy()
         if date_from:
             cdf = cdf[cdf["תאריך"] >= date_from]
@@ -848,7 +814,7 @@ def client_billing_summary():
             cdf = cdf[cdf["תאריך"] <= date_to]
         cdf = cdf.sort_values("תאריך")
 
-        rates = load_rates_from_sheet()
+        rates = load_rates(current_tenant_id())
         cdf["_שעות"] = pd.to_numeric(cdf["שעות"], errors="coerce").fillna(0)
         cdf["_rate"] = cdf["עבודה"].apply(lambda t: rates.get(t, {}).get("revenue", 0.0))
         cdf["_total"] = cdf["_שעות"] * cdf["_rate"]
@@ -875,7 +841,7 @@ def client_billing_summary():
 @login_required
 def field_report():
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         if df.empty:
             return render_template("field_report.html",
                                    rows=[], crop_pivot=[], crops=[], field_totals=[],
@@ -940,6 +906,7 @@ def field_report():
 @app.route("/profit", methods=["GET", "POST"])
 @login_required
 def profit():
+    tenant_id = current_tenant_id()
     if request.method == "POST":
         rates = {}
         for task in VALID_TASKS:
@@ -952,15 +919,15 @@ def profit():
             except ValueError:
                 cost = 0.0
             rates[task] = {"revenue": revenue, "cost": cost}
-        save_rates_to_sheet(rates)
+        save_rates(tenant_id, rates)
         flash("התעריפים נשמרו בהצלחה ✅", "success")
         return redirect(url_for("profit"))
 
-    rates     = load_rates_from_sheet()
+    rates     = load_rates(tenant_id)
     date_from = request.args.get("date_from", "").strip()
     date_to   = request.args.get("date_to", "").strip()
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(tenant_id)
         if date_from:
             df = df[df["תאריך"] >= date_from]
         if date_to:
@@ -1006,7 +973,7 @@ def profit():
 @login_required
 def field_report_print():
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         client_filter = request.args.get("client", "").strip()
         date_from     = request.args.get("date_from", "").strip()
         date_to       = request.args.get("date_to", "").strip()
@@ -1057,7 +1024,7 @@ def field_report_print():
 @login_required
 def api_ai_summary():
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
         if df.empty:
             return jsonify({"summary": "אין נתונים לניתוח."})
 
@@ -1146,6 +1113,7 @@ def fields_map():
 @app.route("/api/fields", methods=["GET", "POST"])
 @login_required
 def api_fields():
+    tenant_id = current_tenant_id()
     if request.method == "POST":
         data = request.get_json(silent=True) or {}
         uid   = data.get("uid")
@@ -1160,18 +1128,16 @@ def api_fields():
                 coords = data.get("coordinates")
                 if not coords:
                     return jsonify({"error": "missing coordinates"}), 400
-                save_polygon_to_sheet(uid, name, color, coords)
-                delete_pin_from_sheet(uid)
-                _log_audit("save-polygon", "Web", f"field: {name}")
+                save_polygon(tenant_id, uid, name, color, coords)
+                log_audit(tenant_id, "save-polygon", "Web", f"field: {name}")
                 return jsonify({"ok": True, "uid": uid, "area_dunam": calculate_polygon_dunam_area(coords)})
             elif type_ == "pin":
                 lat = data.get("lat")
                 lng = data.get("lng")
                 if lat is None or lng is None:
                     return jsonify({"error": "missing lat/lng"}), 400
-                save_pin_to_sheet(uid, name, color, float(lat), float(lng))
-                delete_polygon_from_sheet(uid)
-                _log_audit("save-pin", "Web", f"field: {name}")
+                save_pin(tenant_id, uid, name, color, float(lat), float(lng))
+                log_audit(tenant_id, "save-pin", "Web", f"field: {name}")
                 return jsonify({"ok": True, "uid": uid})
             else:
                 return jsonify({"error": "invalid type"}), 400
@@ -1180,21 +1146,9 @@ def api_fields():
 
     # GET — merge job stats with saved polygons/pins for the map
     try:
-        df = load_data_from_gsheet()
-        polys = {p["uid"]: p for p in load_polygons_from_sheet()}
-        pins = {p["uid"]: p for p in load_pins_from_sheet()}
-
-        # Pins saved before the Polygons/Pins sheets existed live in the older
-        # single-point "FieldCoords" sheet. Fold them in here (matched by name,
-        # since they predate uids) so nobody's saved map pins disappear; the
-        # next drag/save of one of these persists it into the Pins sheet.
-        pin_names = {p["name"] for p in pins.values()}
-        for legacy_name, coord in _load_field_coords().items():
-            if legacy_name not in pin_names:
-                pins[f"legacy:{legacy_name}"] = {
-                    "uid": f"legacy:{legacy_name}", "name": legacy_name, "color": "",
-                    "lat": coord["lat"], "lng": coord["lng"],
-                }
+        df = load_work_entries(tenant_id)
+        polys = {p["uid"]: p for p in load_polygons(tenant_id)}
+        pins = {p["uid"]: p for p in load_pins(tenant_id)}
 
         if not df.empty:
             df["_שעות"] = pd.to_numeric(df["שעות"], errors="coerce").fillna(0)
@@ -1260,33 +1214,26 @@ def api_fields():
 def api_fields_delete(uid):
     """Delete a field's saved polygon or pin by UID (job history is untouched)."""
     try:
-        # A legacy uid ("legacy:<name>") can end up adopted into a real
-        # Polygons/Pins row too — e.g. dragging or drawing an area for a field
-        # that still carried its legacy uid writes a new row under that same
-        # uid string instead of minting a fresh one. So a legacy uid isn't
-        # necessarily *only* in the old FieldCoords sheet — clear everywhere.
-        if uid.startswith("legacy:"):
-            _delete_field_coord(uid[len("legacy:"):])
-        delete_polygon_from_sheet(uid)
-        delete_pin_from_sheet(uid)
-        _log_audit("delete-field", "Web", f"uid: {uid}")
+        tenant_id = current_tenant_id()
+        delete_field(tenant_id, uid)
+        log_audit(tenant_id, "delete-field", "Web", f"uid: {uid}")
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
-
-_dashboard_cache: dict = {}
-_dashboard_cache_time: float = 0.0
-_DASHBOARD_TTL = 120  # 2 minutes
+# No cache here (there was a 2-minute one) — it was keyed only by date range,
+# not tenant, so two tenants viewing the dashboard within the same window
+# could see each other's numbers. Postgres reads are fast enough not to need
+# a cache workaround the way the old Sheets-API-rate-limit one did.
 
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
     try:
-        df  = load_data_from_gsheet()
+        df  = load_work_entries(current_tenant_id())
         cls = sorted(df["שם לקוח"].dropna().unique().tolist()) if not df.empty else []
     except Exception:
         cls = []
@@ -1296,15 +1243,10 @@ def dashboard():
 @app.route("/api/dashboard")
 @login_required
 def api_dashboard():
-    global _dashboard_cache, _dashboard_cache_time
     date_from = request.args.get("from", "")
     date_to   = request.args.get("to",   "")
-    cache_key = f"{date_from}|{date_to}"
-    if (_dashboard_cache.get("_key") == cache_key
-            and time.time() - _dashboard_cache_time < _DASHBOARD_TTL):
-        return jsonify(_dashboard_cache["data"])
     try:
-        df = load_data_from_gsheet()
+        df = load_work_entries(current_tenant_id())
 
         empty_resp = {
             "kpis": {"total": 0, "this_month": 0, "prev_month": 0,
@@ -1316,8 +1258,6 @@ def api_dashboard():
             "updated_at": datetime.now().strftime("%H:%M:%S"),
         }
         if df.empty:
-            _dashboard_cache = {"_key": cache_key, "data": empty_resp}
-            _dashboard_cache_time = time.time()
             return jsonify(empty_resp)
 
         now          = datetime.now()
@@ -1412,8 +1352,6 @@ def api_dashboard():
             "monthly_trend": monthly.to_dict(orient="records"),
             "updated_at":    datetime.now().strftime("%H:%M:%S"),
         }
-        _dashboard_cache = {"_key": cache_key, "data": result}
-        _dashboard_cache_time = time.time()
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1432,13 +1370,28 @@ def server_error(e):
     return render_template("500.html"), 500
 
 
+# ── Manual tenant onboarding (no public signup yet) ────────────────────────────
+
+@app.cli.command("create-tenant")
+@click.argument("name")
+@click.argument("manager_username")
+@click.argument("manager_password")
+@click.option("--slug", default=None, help="קוד חברה (ברירת מחדל: נגזר מהשם)")
+def create_tenant_command(name, manager_username, manager_password, slug):
+    """Onboard one pilot customer: flask create-tenant "שם החברה" user1 pass1234"""
+    from gadash.auth import create_tenant
+    try:
+        tenant_id = create_tenant(name, manager_username, manager_password, slug=slug)
+        from gadash.auth import get_tenant_slug
+        click.echo(f"✅ נוצר טננט #{tenant_id} — קוד חברה: {get_tenant_slug(tenant_id)}")
+    except ValueError as e:
+        click.echo(f"❌ {e}")
+
+
 # ── Background threads & entry point ──────────────────────────────────────────
 
-_audit_flush_thread = threading.Thread(target=_flush_audit_to_sheets, daemon=True)
-_audit_flush_thread.start()
-
 if os.environ.get("BOT_TOKEN"):
-    _bot_thread = threading.Thread(target=start_telegram_bot, daemon=True)
+    _bot_thread = threading.Thread(target=start_telegram_bot, args=(app,), daemon=True)
     _bot_thread.start()
 
 if __name__ == "__main__":

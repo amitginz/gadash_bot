@@ -1,86 +1,53 @@
-import hashlib
+"""Tenant-scoped worker records — replaces the Workers sheet.
 
+telegram_id stays looked-up globally (not tenant-scoped): see the module
+docstring in gadash/models_db.py for why — one shared Telegram bot needs to
+resolve which tenant a message belongs to from the sender's telegram_id
+alone.
+"""
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from gadash.sheets import _get_workers_sheet
+from gadash.models_db import Worker, db
 
 
-def _hash_pw(password: str) -> str:
-    return generate_password_hash(password)
+def _load_workers(tenant_id: int) -> list:
+    rows = Worker.query.filter_by(tenant_id=tenant_id).order_by(Worker.name).all()
+    return [{"שם": w.name, "password_hash": w.password_hash,
+             "telegram_id": w.telegram_id or ""} for w in rows]
 
 
-def _load_workers() -> list:
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return []
-        rows = ws.get_all_values()
-        return [
-            {"שם": r[0],
-             "password_hash": r[1] if len(r) > 1 else "",
-             "telegram_id":   r[2] if len(r) > 2 else ""}
-            for r in rows[1:] if r and r[0]
-        ]
-    except Exception:
-        return []
+def _verify_worker(tenant_id: int, name: str, password: str) -> bool:
+    w = Worker.query.filter_by(tenant_id=tenant_id, name=name).first()
+    return bool(w and check_password_hash(w.password_hash, password))
 
 
-def _verify_worker(name: str, password: str) -> bool:
-    for w in _load_workers():
-        if w["שם"] != name:
-            continue
-        stored = w["password_hash"]
-        # Support legacy SHA-256 hashes (64 hex chars) alongside new Werkzeug hashes
-        if len(stored) == 64 and all(c in "0123456789abcdef" for c in stored):
-            return stored == hashlib.sha256(password.encode()).hexdigest()
-        return check_password_hash(stored, password)
-    return False
-
-
-def _add_worker(name: str, password: str) -> bool:
-    workers = _load_workers()
-    if any(w["שם"] == name for w in workers):
+def _add_worker(tenant_id: int, name: str, password: str) -> bool:
+    if Worker.query.filter_by(tenant_id=tenant_id, name=name).first():
         return False
-    try:
-        ws = _get_workers_sheet()
-        if ws:
-            ws.append_row([name, _hash_pw(password), ""])
-            return True
-    except Exception:
-        pass
-    return False
+    db.session.add(Worker(tenant_id=tenant_id, name=name,
+                           password_hash=generate_password_hash(password)))
+    db.session.commit()
+    return True
 
 
-def _delete_worker(name: str) -> bool:
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return False
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.delete_rows(i)
-                return True
-    except Exception:
-        pass
-    return False
+def _delete_worker(tenant_id: int, name: str) -> bool:
+    deleted = Worker.query.filter_by(tenant_id=tenant_id, name=name).delete()
+    db.session.commit()
+    return bool(deleted)
 
 
 def _get_worker_by_telegram_id(telegram_id: int) -> dict | None:
-    tid = str(telegram_id)
-    return next((w for w in _load_workers() if w.get("telegram_id") == tid), None)
+    """Cross-tenant by design — see module docstring."""
+    w = Worker.query.filter_by(telegram_id=str(telegram_id)).first()
+    if not w:
+        return None
+    return {"שם": w.name, "tenant_id": w.tenant_id}
 
 
-def _link_worker_telegram(name: str, telegram_id: int) -> bool:
-    try:
-        ws = _get_workers_sheet()
-        if not ws:
-            return False
-        rows = ws.get_all_values()
-        for i, row in enumerate(rows[1:], start=2):
-            if row and row[0] == name:
-                ws.update_cell(i, 3, str(telegram_id))
-                return True
-    except Exception:
-        pass
-    return False
+def _link_worker_telegram(tenant_id: int, name: str, telegram_id: int) -> bool:
+    w = Worker.query.filter_by(tenant_id=tenant_id, name=name).first()
+    if not w:
+        return False
+    w.telegram_id = str(telegram_id)
+    db.session.commit()
+    return True

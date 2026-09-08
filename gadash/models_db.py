@@ -24,6 +24,11 @@ class Tenant(db.Model):
 
     id         = db.Column(db.Integer, primary_key=True)
     name       = db.Column(db.String(200), nullable=False)
+    # Worker names are only unique *within* a tenant (unlike telegram_id/manager
+    # username), so the web worker-login form needs one more piece of context
+    # to know which tenant's "דני" is meant — this is that: a short code the
+    # manager gives each worker once during onboarding.
+    slug       = db.Column(db.String(64), nullable=False, unique=True)
     created_at = db.Column(db.DateTime, nullable=False, default=_utcnow)
 
     managers     = db.relationship("Manager", back_populates="tenant", cascade="all, delete-orphan")
