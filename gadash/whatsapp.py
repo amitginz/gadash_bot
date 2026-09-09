@@ -133,14 +133,21 @@ def is_duplicate_message(message_id: str | None) -> bool:
 
 # ── Conversation ─────────────────────────────────────────────────────────────
 
+WELCOME_MESSAGE = (
+    "שלום! 👋 כאן הבוט של מערכת גד\"ש לדיווח עבודות שדה.\n\n"
+    "כדי להתחיל, שלח לי את קוד החברה שקיבלת מהמנהל שלך."
+)
+
+
 def handle_message(phone: str, text: str | None, audio_bytes: bytes | None) -> str:
     """Returns the reply text for the caller to send back to `phone`."""
     if phone not in _sessions:
         worker = _get_worker_by_whatsapp_number(phone)
-        _sessions[phone] = (
-            {"state": "IDLE", "tenant_id": worker["tenant_id"], "worker_name": worker["שם"]}
-            if worker else {"state": "REGISTER_TENANT"}
-        )
+        if worker:
+            _sessions[phone] = {"state": "IDLE", "tenant_id": worker["tenant_id"], "worker_name": worker["שם"]}
+        else:
+            _sessions[phone] = {"state": "REGISTER_TENANT"}
+            return WELCOME_MESSAGE
     session = _sessions[phone]
     state = session["state"]
     text = (text or "").strip()

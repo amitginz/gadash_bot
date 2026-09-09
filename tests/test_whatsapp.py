@@ -129,6 +129,14 @@ class TestDownloadMedia:
 
 class TestRegistrationFlow:
 
+    def test_first_ever_message_gets_welcome_and_is_not_treated_as_slug(self, mock_gsheet):
+        """A brand-new phone number's first message — whatever it says —
+        should get the welcome/instructions, not be silently interpreted
+        as a (probably wrong) company-code guess."""
+        reply = whatsapp.handle_message("972509999999", "Hi", None)
+        assert reply == whatsapp.WELCOME_MESSAGE
+        assert whatsapp._sessions["972509999999"]["state"] == "REGISTER_TENANT"
+
     def test_registers_and_links_worker(self, mock_gsheet):
         from gadash import auth
         from gadash.workers import _add_worker, _get_worker_by_whatsapp_number
@@ -136,6 +144,9 @@ class TestRegistrationFlow:
         _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
         slug = auth.get_tenant_slug(mock_gsheet.tenant_id)
         phone = "972501234567"
+
+        r0 = whatsapp.handle_message(phone, "שלום", None)
+        assert r0 == whatsapp.WELCOME_MESSAGE
 
         r1 = whatsapp.handle_message(phone, slug, None)
         assert "שם המשתמש" in r1
@@ -148,14 +159,17 @@ class TestRegistrationFlow:
         assert _get_worker_by_whatsapp_number(phone) == {"שם": "דני", "tenant_id": mock_gsheet.tenant_id}
 
     def test_wrong_slug_stays_on_step(self, mock_gsheet):
-        reply = whatsapp.handle_message("972500000001", "no-such-slug", None)
+        phone = "972500000001"
+        whatsapp.handle_message(phone, "היי", None)  # consumes the welcome step
+        reply = whatsapp.handle_message(phone, "no-such-slug", None)
         assert "לא נמצא" in reply
-        assert whatsapp._sessions["972500000001"]["state"] == "REGISTER_TENANT"
+        assert whatsapp._sessions[phone]["state"] == "REGISTER_TENANT"
 
     def test_wrong_name_resets_to_tenant_step(self, mock_gsheet):
         from gadash import auth
         slug = auth.get_tenant_slug(mock_gsheet.tenant_id)
         phone = "972500000002"
+        whatsapp.handle_message(phone, "היי", None)  # consumes the welcome step
         whatsapp.handle_message(phone, slug, None)
         reply = whatsapp.handle_message(phone, "לא קיים בכלל", None)
         assert "לא נמצא" in reply
@@ -167,6 +181,7 @@ class TestRegistrationFlow:
         _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
         slug = auth.get_tenant_slug(mock_gsheet.tenant_id)
         phone = "972500000003"
+        whatsapp.handle_message(phone, "היי", None)  # consumes the welcome step
         whatsapp.handle_message(phone, slug, None)
         whatsapp.handle_message(phone, "דני", None)
         reply = whatsapp.handle_message(phone, "wrong-password", None)
