@@ -11,6 +11,10 @@
   .badge-ריסוס { background:#dcfce7; color:#166534; }
   .badge-קציר  { background:#dbeafe; color:#1e40af; }
   .badge-דיסוק { background:#ede9fe; color:#5b21b6; }
+  .badge-דישון { background:#ffedd5; color:#9a3412; }
+  .badge-השקיה { background:#cffafe; color:#155e75; }
+  .badge-שתילה { background:#ecfccb; color:#3f6212; }
+  .badge-עישוב { background:#fce7f3; color:#9d174d; }
   .badge-אחר   { background:#f1f5f9; color:#475569; }
   .badge-task  { border-radius:20px; padding:.15rem .55rem; font-size:.72rem; font-weight:600; }
 {% endblock %}
@@ -193,7 +197,7 @@
   const cropHours    = {{ crop_hours    | tojson }};
   const taskCounts   = {{ task_counts   | tojson }};
   const monthlyHours = {{ monthly_hours | tojson }};
-  const TASK_COLORS  = {'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','אחר':'#94a3b8'};
+  const TASK_COLORS  = {'חריש':'#f59e0b','ריסוס':'#22c55e','קציר':'#3b82f6','דיסוק':'#a855f7','דישון':'#ea580c','השקיה':'#06b6d4','שתילה':'#84cc16','עישוב':'#ec4899','אחר':'#94a3b8'};
   const PALETTE = ['#3578c8','#22c55e','#f59e0b','#a855f7','#ef4444','#14b8a6','#f97316','#6366f1'];
 
   if (fieldHours.length) {

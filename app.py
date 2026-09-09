@@ -348,7 +348,7 @@ def add():
         lists = _autocomplete_lists(load_work_entries(current_tenant_id()))
     except Exception:
         pass
-    return render_template("add.html", today=today, prefill=prefill, **lists)
+    return render_template("add.html", today=today, prefill=prefill, task_options=sorted(VALID_TASKS), **lists)
 
 
 @app.route("/duplicate/<int:row_id>")

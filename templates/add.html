@@ -47,7 +47,7 @@
           <label class="form-label">עבודה *</label>
           <select class="form-select" name="עבודה" required>
             <option value="">בחר סוג עבודה…</option>
-            {% for opt in ['חריש','ריסוס','קציר','דיסוק','אחר'] %}
+            {% for opt in task_options %}
             <option {% if prefill.get('עבודה') == opt %}selected{% endif %}>{{ opt }}</option>
             {% endfor %}
           </select>
