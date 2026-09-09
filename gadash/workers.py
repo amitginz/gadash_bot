@@ -51,3 +51,20 @@ def _link_worker_telegram(tenant_id: int, name: str, telegram_id: int) -> bool:
     w.telegram_id = str(telegram_id)
     db.session.commit()
     return True
+
+
+def _get_worker_by_whatsapp_number(whatsapp_number: str) -> dict | None:
+    """Cross-tenant by design — see module docstring."""
+    w = Worker.query.filter_by(whatsapp_number=whatsapp_number).first()
+    if not w:
+        return None
+    return {"שם": w.name, "tenant_id": w.tenant_id}
+
+
+def _link_worker_whatsapp(tenant_id: int, name: str, whatsapp_number: str) -> bool:
+    w = Worker.query.filter_by(tenant_id=tenant_id, name=name).first()
+    if not w:
+        return False
+    w.whatsapp_number = whatsapp_number
+    db.session.commit()
+    return True

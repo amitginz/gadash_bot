@@ -58,8 +58,11 @@ class Worker(db.Model):
     tenant_id     = db.Column(db.Integer, db.ForeignKey("tenants.id"), nullable=False, index=True)
     name          = db.Column(db.String(120), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    # Globally unique (not per-tenant) — see module docstring.
-    telegram_id   = db.Column(db.String(32), unique=True, nullable=True, index=True)
+    # Globally unique (not per-tenant) — see module docstring. whatsapp_number
+    # plays the identical role for the WhatsApp channel (one shared Business
+    # number for every tenant, resolved by sender number).
+    telegram_id     = db.Column(db.String(32), unique=True, nullable=True, index=True)
+    whatsapp_number = db.Column(db.String(20), unique=True, nullable=True, index=True)
 
     tenant = db.relationship("Tenant", back_populates="workers")
 

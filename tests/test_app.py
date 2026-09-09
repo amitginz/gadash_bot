@@ -609,57 +609,9 @@ class TestBotModule:
 
 
 class TestVoiceEntry:
-    """🎤 Voice-note job reporting: Gemini transcribes + extracts fields, this
-    module turns that into the same shape confirm() already knows how to save."""
-
-    def test_strip_json_fences_removes_markdown_wrapper(self):
-        from gadash.bot import _strip_json_fences
-        assert _strip_json_fences('```json\n{"a": 1}\n```') == '{"a": 1}'
-        assert _strip_json_fences('{"a": 1}') == '{"a": 1}'
-
-    def test_normalize_task_exact_match(self):
-        from gadash.bot import _normalize_task
-        assert _normalize_task("קציר") == "קציר"
-
-    def test_normalize_task_fuzzy_match(self):
-        from gadash.bot import _normalize_task
-        assert _normalize_task("עשינו חריש היום") == "חריש"
-
-    def test_normalize_task_unrecognized_falls_back_to_other(self):
-        from gadash.bot import _normalize_task
-        assert _normalize_task("משהו מוזר לגמרי") == "אחר"
-        assert _normalize_task("") == "אחר"
-
-    def test_fields_from_voice_json_happy_path(self):
-        from gadash.bot import _fields_from_voice_json
-        raw = json.dumps({
-            "שם לקוח": "איתמר", "תאריך": "2026-06-01", "עבודה": "ריסוס",
-            "שם חלקה": "חלקה ב", "גידול": "חיטה", "כמות": "30 דונם",
-            "שעות": "3.5", "כלי": "מרסס", "מפעיל": "דני", "הערות": "",
-        })
-        fields = _fields_from_voice_json(raw)
-        assert fields["שם לקוח"] == "איתמר"
-        assert fields["עבודה"] == "ריסוס"
-        assert fields["תאריך"] == "2026-06-01"
-
-    def test_fields_from_voice_json_defaults_missing_date_to_today(self):
-        from gadash.bot import _fields_from_voice_json
-        from datetime import date
-        raw = json.dumps({"שם לקוח": "רוזה", "עבודה": "קציר"})
-        fields = _fields_from_voice_json(raw)
-        assert fields["תאריך"] == date.today().strftime("%Y-%m-%d")
-
-    def test_fields_from_voice_json_strips_code_fences(self):
-        from gadash.bot import _fields_from_voice_json
-        raw = '```json\n{"שם לקוח": "מאי", "עבודה": "דיסוק"}\n```'
-        fields = _fields_from_voice_json(raw)
-        assert fields["שם לקוח"] == "מאי"
-        assert fields["עבודה"] == "דיסוק"
-
-    def test_fields_from_voice_json_malformed_raises(self):
-        from gadash.bot import _fields_from_voice_json
-        with pytest.raises(json.JSONDecodeError):
-            _fields_from_voice_json("not json at all")
+    """🎤 Voice-note job reporting: Gemini transcribes + extracts fields (see
+    tests/test_ai_extract.py for the extraction logic itself), this module
+    turns that into the same shape confirm() already knows how to save."""
 
     def test_voice_entry_registered_in_conversation(self):
         # Guards against the handler existing but never being wired up.
@@ -675,6 +627,7 @@ class TestVoiceEntry:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash import ai_extract
         from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
@@ -691,7 +644,7 @@ class TestVoiceEntry:
         fake_model.generate_content.return_value = fake_response
         fake_genai = MagicMock()
         fake_genai.GenerativeModel.return_value = fake_model
-        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+        monkeypatch.setattr(ai_extract, "_genai", fake_genai)
 
         voice_file = MagicMock()
         voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"fake-ogg-audio"))
@@ -731,6 +684,7 @@ class TestVoiceEntry:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash import ai_extract
         from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
@@ -743,7 +697,7 @@ class TestVoiceEntry:
         fake_model.generate_content.return_value = fake_response
         fake_genai = MagicMock()
         fake_genai.GenerativeModel.return_value = fake_model
-        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+        monkeypatch.setattr(ai_extract, "_genai", fake_genai)
 
         voice_file = MagicMock()
         voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"audio"))
@@ -773,6 +727,7 @@ class TestVoiceEntry:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
         import gadash.bot as bot_module
+        from gadash import ai_extract
         from gadash.workers import _add_worker, _link_worker_telegram
 
         monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
@@ -783,7 +738,7 @@ class TestVoiceEntry:
         fake_model.generate_content.side_effect = RuntimeError("network blip")
         fake_genai = MagicMock()
         fake_genai.GenerativeModel.return_value = fake_model
-        monkeypatch.setattr(bot_module, "_genai", fake_genai)
+        monkeypatch.setattr(ai_extract, "_genai", fake_genai)
 
         voice_file = MagicMock()
         voice_file.download_as_bytearray = AsyncMock(return_value=bytearray(b"audio"))

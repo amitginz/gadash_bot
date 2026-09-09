@@ -144,3 +144,24 @@ class TestWorkersModule:
             found = gworkers._get_worker_by_telegram_id(555555)
             assert found == {"שם": "דני", "tenant_id": t1}
             assert gworkers._get_worker_by_telegram_id(999999) is None
+
+    def test_whatsapp_lookup_is_global_and_returns_tenant(self, app_ctx, clean_db):
+        with app_ctx.app_context():
+            t1 = auth.create_tenant("א", "m1", "pw123456", slug="a")
+            gworkers._add_worker(t1, "דני", "pw")
+            gworkers._link_worker_whatsapp(t1, "דני", "972501234567")
+            found = gworkers._get_worker_by_whatsapp_number("972501234567")
+            assert found == {"שם": "דני", "tenant_id": t1}
+            assert gworkers._get_worker_by_whatsapp_number("972500000000") is None
+
+    def test_telegram_and_whatsapp_links_are_independent(self, app_ctx, clean_db):
+        # A worker can be linked on one channel, both, or neither — the two
+        # columns don't interfere with each other.
+        with app_ctx.app_context():
+            t1 = auth.create_tenant("א", "m1", "pw123456", slug="a")
+            gworkers._add_worker(t1, "דני", "pw")
+            gworkers._link_worker_telegram(t1, "דני", 555555)
+            assert gworkers._get_worker_by_whatsapp_number("972501234567") is None
+            gworkers._link_worker_whatsapp(t1, "דני", "972501234567")
+            assert gworkers._get_worker_by_telegram_id(555555) == {"שם": "דני", "tenant_id": t1}
+            assert gworkers._get_worker_by_whatsapp_number("972501234567") == {"שם": "דני", "tenant_id": t1}

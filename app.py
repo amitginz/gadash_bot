@@ -31,6 +31,7 @@ except ImportError:
     _genai = None
 
 import gadash.bot as _bot_module
+from gadash import whatsapp
 from gadash.auth import change_manager_password, change_worker_password, verify_manager, verify_worker
 from gadash.bot import start_telegram_bot
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
@@ -632,6 +633,37 @@ def telegram_webhook(token):
             _bot_module._telegram_app.process_update(update),
             _bot_module._telegram_loop,
         )
+    return "ok"
+
+
+@app.route("/webhook/whatsapp", methods=["GET"])
+def whatsapp_verify():
+    """Meta's one-time webhook subscription handshake, run once when the
+    webhook URL is configured in the Meta app dashboard."""
+    challenge = whatsapp.verify_webhook(
+        request.args.get("hub.mode", ""),
+        request.args.get("hub.verify_token", ""),
+        request.args.get("hub.challenge", ""),
+    )
+    if challenge is None:
+        return "forbidden", 403
+    return challenge
+
+
+@app.route("/webhook/whatsapp", methods=["POST"])
+def whatsapp_webhook():
+    payload = request.get_json(force=True, silent=True) or {}
+    for msg in whatsapp.parse_incoming(payload):
+        audio_bytes = None
+        if msg["audio_id"]:
+            try:
+                audio_bytes = whatsapp.download_media(msg["audio_id"])
+            except Exception as e:
+                _logger.warning("[WhatsApp] media download failed: %s", e)
+                whatsapp.send_text_message(msg["phone"], "❌ לא הצלחתי להוריד את ההקלטה. נסה שוב.")
+                continue
+        reply = whatsapp.handle_message(msg["phone"], msg["text"], audio_bytes)
+        whatsapp.send_text_message(msg["phone"], reply)
     return "ok"
 
 

@@ -1,8 +1,6 @@
 import asyncio
-import json
 import logging
 import os
-import re
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -14,11 +12,7 @@ from telegram.ext import (
     ContextTypes, MessageHandler, filters,
 )
 
-try:
-    import google.generativeai as _genai
-except ImportError:
-    _genai = None
-
+from gadash import ai_extract
 from gadash.auth import get_tenant_id_by_slug
 from gadash.db import (
     add_subscriber, delete_work_entry, get_subscribers,
@@ -34,56 +28,6 @@ from gadash.workers import (
 )
 
 _logger = logging.getLogger(__name__)
-
-VOICE_FIELDS = [
-    "שם לקוח", "תאריך", "עבודה", "שם חלקה", "גידול",
-    "כמות", "שעות", "כלי", "מפעיל", "הערות",
-]
-
-VOICE_PROMPT = """אתה עוזר להזין נתוני עבודות שדה חקלאיות ממערכת ניהול עבודות גד"ש.
-תמלל את ההודעה הקולית (בעברית מדוברת) וחלץ ממנה את הפרטים הבאים כאובייקט JSON יחיד, בלי טקסט נוסף ובלי markdown fences:
-
-{
-  "שם לקוח": "",
-  "תאריך": "בפורמט YYYY-MM-DD אם הוזכר תאריך מפורש (למשל 'אתמול', 'ה-3 ליוני') — אחרת השאר ריק",
-  "עבודה": "אחד בדיוק מהערכים: חריש, ריסוס, קציר, דיסוק — או 'אחר' אם לא מתאים",
-  "שם חלקה": "",
-  "גידול": "",
-  "כמות": "לדוגמה '30 דונם'",
-  "שעות": "מספר שעות עבודה, ספרות בלבד אם אפשר",
-  "כלי": "",
-  "מפעיל": "",
-  "הערות": ""
-}
-
-אם פרט מסוים לא הוזכר בהקלטה כלל — השאר את הערך שלו כמחרוזת ריקה. אל תמציא מידע שלא נאמר בפירוש."""
-
-
-def _strip_json_fences(raw: str) -> str:
-    """Gemini sometimes wraps JSON in ```json ... ``` despite instructions not to."""
-    return re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE).strip()
-
-
-def _normalize_task(text: str) -> str:
-    """Map free-text task guesses onto the fixed VALID_TASKS enum, defaulting to 'אחר'."""
-    text = (text or "").strip()
-    if text in VALID_TASKS:
-        return text
-    return next((t for t in VALID_TASKS if t in text), "אחר")
-
-
-def _fields_from_voice_json(raw: str) -> dict:
-    """Parse a Gemini voice-transcription response into WorkEntry-shaped field values.
-
-    Raises ValueError/json.JSONDecodeError on malformed model output — callers
-    decide how to degrade (e.g. fall back to the manual step-by-step flow).
-    """
-    data = json.loads(_strip_json_fences(raw))
-    fields = {k: str(data.get(k, "") or "").strip() for k in VOICE_FIELDS}
-    fields["עבודה"] = _normalize_task(fields["עבודה"])
-    fields["תאריך"] = fields["תאריך"] or date.today().strftime("%Y-%m-%d")
-    return fields
-
 
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
 
@@ -472,8 +416,7 @@ async def voice_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["_worker_name"] = worker["שם"]
     context.user_data["_tenant_id"] = worker["tenant_id"]
 
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    if not gemini_key or not _genai:
+    if not ai_extract.is_available():
         await update.message.reply_text(
             "🎤 דיווח קולי לא זמין כרגע. אפשר להזין ידנית — שלח 'הזן עבודה חדשה'.",
             reply_markup=_menu_markup(),
@@ -484,14 +427,7 @@ async def voice_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         voice_file = await update.message.voice.get_file()
         audio_bytes = bytes(await voice_file.download_as_bytearray())
-
-        _genai.configure(api_key=gemini_key)
-        model = _genai.GenerativeModel("gemini-2.5-flash")
-        response = await asyncio.to_thread(
-            model.generate_content,
-            [{"mime_type": "audio/ogg", "data": audio_bytes}, VOICE_PROMPT],
-        )
-        fields = _fields_from_voice_json(response.text)
+        fields = await asyncio.to_thread(ai_extract.extract_fields_from_audio, audio_bytes)
     except Exception as e:
         _logger.warning("[BOT] Voice parsing failed: %s", e)
         await processing_msg.edit_text(
