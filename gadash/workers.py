@@ -5,6 +5,8 @@ docstring in gadash/models_db.py for why — one shared Telegram bot needs to
 resolve which tenant a message belongs to from the sender's telegram_id
 alone.
 """
+from __future__ import annotations
+
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from gadash.models_db import Worker, db

@@ -6,6 +6,8 @@ unique). Worker names are only unique *within* a tenant, so a worker also
 supplies their tenant's slug — a short code the manager hands out once
 during onboarding (there's no self-serve signup to discover it from).
 """
+from __future__ import annotations
+
 import re
 import secrets
 

@@ -15,6 +15,8 @@ send_text_message/download_media degrade to a logged no-op if the three
 WHATSAPP_* env vars aren't set, same as the rest of this app does when
 GOOGLE_CREDS/BOT_TOKEN are missing.
 """
+from __future__ import annotations
+
 import logging
 import os
 from collections import deque
