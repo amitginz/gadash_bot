@@ -75,7 +75,7 @@ def _call_gemini(parts: list) -> str:
     if not is_available():
         raise RuntimeError("GEMINI_API_KEY not configured — check is_available() before calling")
     _genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    model = _genai.GenerativeModel("gemini-2.5-flash")
+    model = _genai.GenerativeModel("gemini-3.6-flash")
     return model.generate_content(parts).text
 
 

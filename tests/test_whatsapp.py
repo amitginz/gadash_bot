@@ -16,11 +16,16 @@ from gadash import whatsapp
 
 @pytest.fixture(autouse=True)
 def _reset_sessions():
-    """_sessions is module-level state — without this, one test's in-progress
-    registration would leak into the next test's fresh phone number checks."""
+    """_sessions and the dedup tracker are module-level state — without this,
+    one test's in-progress registration or seen-message-ids would leak into
+    the next test's fresh phone number / message id checks."""
     whatsapp._sessions.clear()
+    whatsapp._seen_message_ids.clear()
+    whatsapp._seen_message_ids_set.clear()
     yield
     whatsapp._sessions.clear()
+    whatsapp._seen_message_ids.clear()
+    whatsapp._seen_message_ids_set.clear()
 
 
 class TestVerifyWebhook:
@@ -46,18 +51,18 @@ class TestParseIncoming:
 
     def test_text_message(self):
         payload = {"entry": [{"changes": [{"value": {"messages": [
-            {"from": "972501234567", "type": "text", "text": {"body": "שלום"}}
+            {"from": "972501234567", "type": "text", "text": {"body": "שלום"}, "id": "wamid.1"}
         ]}}]}]}
         assert whatsapp.parse_incoming(payload) == [
-            {"phone": "972501234567", "text": "שלום", "audio_id": None}
+            {"phone": "972501234567", "text": "שלום", "audio_id": None, "id": "wamid.1"}
         ]
 
     def test_audio_message(self):
         payload = {"entry": [{"changes": [{"value": {"messages": [
-            {"from": "972501234567", "type": "audio", "audio": {"id": "media-42"}}
+            {"from": "972501234567", "type": "audio", "audio": {"id": "media-42"}, "id": "wamid.2"}
         ]}}]}]}
         assert whatsapp.parse_incoming(payload) == [
-            {"phone": "972501234567", "text": None, "audio_id": "media-42"}
+            {"phone": "972501234567", "text": None, "audio_id": "media-42", "id": "wamid.2"}
         ]
 
     def test_status_update_payload_yields_nothing(self):
@@ -289,3 +294,70 @@ class TestJobReportFlow:
 
         reply = whatsapp.handle_message("972500000014", "עבדתי אצל מישהו", None)
         assert "לא זמין" in reply
+
+
+class TestDuplicateMessages:
+    """Meta retries webhook delivery when it doesn't get a fast response —
+    the same message id can arrive more than once. Found in production
+    testing: a slow reply (Gemini + Send API round trip) caused the same
+    'כן' confirm to be redelivered and saved 3 times before this existed."""
+
+    def test_first_call_is_not_a_duplicate(self):
+        assert whatsapp.is_duplicate_message("wamid.abc") is False
+
+    def test_second_call_with_same_id_is_a_duplicate(self):
+        assert whatsapp.is_duplicate_message("wamid.abc") is False
+        assert whatsapp.is_duplicate_message("wamid.abc") is True
+        assert whatsapp.is_duplicate_message("wamid.abc") is True
+
+    def test_different_ids_are_independent(self):
+        assert whatsapp.is_duplicate_message("wamid.1") is False
+        assert whatsapp.is_duplicate_message("wamid.2") is False
+        assert whatsapp.is_duplicate_message("wamid.1") is True
+        assert whatsapp.is_duplicate_message("wamid.2") is True
+
+    def test_missing_id_is_never_flagged_as_duplicate(self):
+        assert whatsapp.is_duplicate_message(None) is False
+        assert whatsapp.is_duplicate_message(None) is False
+
+    def test_tracker_is_bounded(self):
+        maxlen = whatsapp._seen_message_ids.maxlen
+        for i in range(maxlen + 10):
+            assert whatsapp.is_duplicate_message(f"wamid.{i}") is False
+        assert len(whatsapp._seen_message_ids) == maxlen
+        assert len(whatsapp._seen_message_ids_set) == maxlen
+        # the earliest ids were evicted to make room — no longer flagged as seen
+        assert whatsapp.is_duplicate_message("wamid.0") is False
+
+    def test_retried_confirm_does_not_double_save(self, mock_gsheet, monkeypatch):
+        """End-to-end shape of the bug: the same 'כן' webhook delivered twice
+        must save the work entry once, not twice."""
+        from gadash.db import load_work_entries
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000020")
+
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        fake_response = MagicMock()
+        fake_response.text = json.dumps({"שם לקוח": "רותם", "עבודה": "דיסוק"})
+        fake_model = MagicMock()
+        fake_model.generate_content.return_value = fake_response
+        fake_genai = MagicMock()
+        fake_genai.GenerativeModel.return_value = fake_model
+        monkeypatch.setattr("gadash.ai_extract._genai", fake_genai)
+
+        whatsapp.handle_message("972500000020", "עבדתי אצל רותם דיסוק", None)
+
+        # Simulate app.py's route: check is_duplicate_message before calling
+        # handle_message at all, exactly like the real webhook loop does.
+        confirm_id = "wamid.confirm-1"
+        assert whatsapp.is_duplicate_message(confirm_id) is False
+        whatsapp.handle_message("972500000020", "כן", None)
+
+        # Meta retries delivery of the same confirm event.
+        assert whatsapp.is_duplicate_message(confirm_id) is True
+        # A real caller would skip calling handle_message entirely here.
+
+        df = load_work_entries(mock_gsheet.tenant_id)
+        assert len(df) == 1

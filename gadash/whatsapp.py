@@ -11,13 +11,13 @@ One shared WhatsApp Business number serves every tenant — a worker's
 whatsapp_number resolves their tenant on its own (gadash/workers.py), the
 same pattern already used for the Telegram bot's telegram_id.
 
-Nothing here has been exercised against the real Cloud API — there's no
-Meta app/phone number yet. send_text_message/download_media degrade to a
-logged no-op if the three WHATSAPP_* env vars aren't set, same as the rest
-of this app does when GOOGLE_CREDS/BOT_TOKEN are missing.
+send_text_message/download_media degrade to a logged no-op if the three
+WHATSAPP_* env vars aren't set, same as the rest of this app does when
+GOOGLE_CREDS/BOT_TOKEN are missing.
 """
 import logging
 import os
+from collections import deque
 
 import requests
 
@@ -84,7 +84,7 @@ def download_media(media_id: str) -> bytes:
 
 
 def parse_incoming(payload: dict) -> list:
-    """Pulls {"phone", "text", "audio_id"} out of a Meta webhook POST body —
+    """Pulls {"phone", "text", "audio_id", "id"} out of a Meta webhook POST body —
     one entry per text/audio message found. Silently ignores delivery/read
     status-update payloads (no "messages" key) and other message types
     (images, locations, ...) this flow doesn't handle."""
@@ -96,10 +96,39 @@ def parse_incoming(payload: dict) -> list:
                 if not phone:
                     continue
                 if msg.get("type") == "text":
-                    out.append({"phone": phone, "text": msg.get("text", {}).get("body", ""), "audio_id": None})
+                    out.append({"phone": phone, "text": msg.get("text", {}).get("body", ""),
+                                "audio_id": None, "id": msg.get("id")})
                 elif msg.get("type") == "audio":
-                    out.append({"phone": phone, "text": None, "audio_id": msg.get("audio", {}).get("id")})
+                    out.append({"phone": phone, "text": None,
+                                "audio_id": msg.get("audio", {}).get("id"), "id": msg.get("id")})
     return out
+
+
+# WhatsApp Cloud API retries webhook delivery when it doesn't get a fast
+# enough response (our handler calls out to Gemini and the Send API before
+# returning) — the same message can arrive more than once. Track recently
+# seen message ids (wamid) so a retry is a no-op instead of a duplicate save.
+# Bounded so long-running processes don't leak memory; in-memory only, same
+# restart tradeoff as _sessions.
+_seen_message_ids: deque = deque(maxlen=2000)
+_seen_message_ids_set: set = set()
+
+
+def is_duplicate_message(message_id: str | None) -> bool:
+    """Checks-and-marks: the first call for a given message id returns False
+    and remembers it; every subsequent call (a Meta webhook retry) returns
+    True. Callers should skip all processing — audio download included —
+    for a duplicate, not just the save step."""
+    if not message_id:
+        return False
+    if message_id in _seen_message_ids_set:
+        return True
+    if len(_seen_message_ids) >= _seen_message_ids.maxlen:
+        oldest = _seen_message_ids.popleft()
+        _seen_message_ids_set.discard(oldest)
+    _seen_message_ids.append(message_id)
+    _seen_message_ids_set.add(message_id)
+    return False
 
 
 # ── Conversation ─────────────────────────────────────────────────────────────

@@ -202,6 +202,11 @@ def health():
         return jsonify({"status": "degraded", "database": str(e)}), 503
 
 
+@app.route("/privacy")
+def privacy_policy():
+    return render_template("privacy.html")
+
+
 @app.route("/change-password", methods=["GET", "POST"])
 @login_required
 def change_password():
@@ -654,6 +659,9 @@ def whatsapp_verify():
 def whatsapp_webhook():
     payload = request.get_json(force=True, silent=True) or {}
     for msg in whatsapp.parse_incoming(payload):
+        if whatsapp.is_duplicate_message(msg["id"]):
+            _logger.info("[WhatsApp] duplicate webhook delivery for message %s — skipping", msg["id"])
+            continue
         audio_bytes = None
         if msg["audio_id"]:
             try:
@@ -1104,7 +1112,7 @@ def api_ai_summary():
 כלול: השוואה לחודש הקודם, נקודת חוזק אחת, נקודת חולשה אחת, והמלצה מעשית אחת. כתוב בגוף ראשון רבים ("בחנו", "ראינו")."""
             try:
                 _genai.configure(api_key=gemini_key)
-                _model = _genai.GenerativeModel("gemini-2.5-flash")
+                _model = _genai.GenerativeModel("gemini-3.6-flash")
                 r = _model.generate_content(prompt)
                 summary = r.text
             except Exception as ai_err:
