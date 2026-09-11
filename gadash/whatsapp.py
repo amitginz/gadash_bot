@@ -140,6 +140,22 @@ WELCOME_MESSAGE = (
     "כדי להתחיל, שלח לי את קוד החברה שקיבלת מהמנהל שלך."
 )
 
+# (emoji, friendly label) per ai_extract field, for the pre-save summary —
+# keeps the raw internal Hebrew keys off the screen and makes each line easy
+# to scan on a phone. Falls back to a bullet + the raw key for anything new.
+FIELD_DISPLAY = {
+    "שם לקוח": ("👤", "לקוח"),
+    "תאריך":   ("📅", "תאריך"),
+    "עבודה":   ("🔧", "עבודה"),
+    "שם חלקה": ("📍", "חלקה"),
+    "גידול":   ("🌾", "גידול"),
+    "כמות":    ("📏", "כמות"),
+    "שעות":    ("⏱️", "שעות"),
+    "כלי":     ("🚜", "כלי"),
+    "מפעיל":   ("👷", "מפעיל"),
+    "הערות":   ("📝", "הערות"),
+}
+
 
 def handle_message(phone: str, text: str | None, audio_bytes: bytes | None) -> str:
     """Returns the reply text for the caller to send back to `phone`."""
@@ -215,8 +231,15 @@ def _step_report(session: dict, text: str, audio_bytes: bytes | None) -> str:
 
     session["pending_fields"] = fields
     session["state"] = "CONFIRM"
-    summary = "\n".join(f"• {k}: {v}" for k, v in fields.items() if v)
-    return f"זיהיתי:\n\n{summary}\n\nשלח 'כן' לשמירה או 'לא' לביטול."
+    summary = "\n".join(
+        f"{FIELD_DISPLAY.get(k, ('•', k))[0]} *{FIELD_DISPLAY.get(k, ('•', k))[1]}:* {v}"
+        for k, v in fields.items() if v
+    )
+    return (
+        f"📋 בדוק שהפרטים נכונים:\n\n{summary}\n\n"
+        "משהו לא נכון (למשל סוג העבודה)? שלח *לא* ונסה שוב עם ניסוח ברור יותר.\n"
+        "הכל תקין? שלח *כן* לשמירה."
+    )
 
 
 def _step_confirm(session: dict, text: str) -> str:
@@ -237,4 +260,4 @@ def _step_confirm(session: dict, text: str) -> str:
         session.pop("pending_fields", None)
         session["state"] = "IDLE"
         return "בוטל."
-    return "שלח 'כן' לשמירה או 'לא' לביטול."
+    return "שלח *כן* לשמירה או *לא* לביטול."

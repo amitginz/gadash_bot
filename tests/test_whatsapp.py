@@ -228,6 +228,8 @@ class TestJobReportFlow:
 
         r1 = whatsapp.handle_message("972500000010", "עבדתי אצל איתמר, ריססתי 3 שעות", None)
         assert "איתמר" in r1
+        assert "👤 *לקוח:* איתמר" in r1
+        assert "🔧 *עבודה:* ריסוס" in r1
         assert whatsapp._sessions["972500000010"]["state"] == "CONFIRM"
 
         r2 = whatsapp.handle_message("972500000010", "כן", None)
