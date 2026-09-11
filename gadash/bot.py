@@ -35,7 +35,8 @@ WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
  NOTE, CONFIRM, SEARCH, EDIT_SELECT,
  REGISTER_TENANT, REGISTER_NAME, REGISTER_PASSWORD) = range(17)
 
-TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["דישון", "השקיה"], ["שתילה", "עישוב"], ["אחר"]]
+TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["דישון", "השקיה"], ["שתילה", "עישוב"],
+                    ["בציר", "מסיק"], ["גיזום", "הדברה"], ["אחר"]]
 CONFIRM_KEYBOARD = [["כן", "לא"]]
 NOTES_KEYBOARD  = [["ללא הערות"]]
 MENU_KEYBOARD   = [
