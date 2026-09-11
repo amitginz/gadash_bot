@@ -6,11 +6,14 @@ guided 12-step form — can reuse the exact same tested extraction instead of
 a second copy that could drift out of sync.
 """
 import json
+import logging
 import os
 import re
 from datetime import date
 
 from gadash.models import VALID_TASKS
+
+_logger = logging.getLogger(__name__)
 
 try:
     import google.generativeai as _genai
@@ -55,7 +58,16 @@ def _normalize_task(text: str) -> str:
     text = (text or "").strip()
     if text in VALID_TASKS:
         return text
-    return next((t for t in VALID_TASKS if t in text), "אחר")
+    matched = next((t for t in VALID_TASKS if t in text), None)
+    if matched:
+        return matched
+    if text:
+        # Logged (not just silently dropped) because "אחר" is indistinguishable
+        # from a genuinely vague report without this — needed to tell apart
+        # "the worker didn't say what task it was" from "Gemini's guess used
+        # wording our fixed list doesn't cover".
+        _logger.info("[ai_extract] task guess %r matched no VALID_TASKS — defaulting to 'אחר'", text)
+    return "אחר"
 
 
 def _fields_from_json(raw: str) -> dict:
