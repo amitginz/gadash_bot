@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from gadash import ai_extract
 from gadash.ai_extract import _fields_from_json, _normalize_task, _strip_json_fences
 
 
@@ -70,3 +71,11 @@ def test_is_available_true_with_api_key(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     from gadash import ai_extract
     assert ai_extract.is_available() is True
+
+
+def test_match_task_returns_none_instead_of_defaulting_to_other():
+    assert ai_extract.match_task("ריסוס") == "ריסוס"
+    assert ai_extract.match_task("ריסוס חומרי הדברה") == "ריסוס"
+    assert ai_extract.match_task("שחייה") is None
+    assert ai_extract.match_task("") is None
+    assert ai_extract._normalize_task("שחייה") == "אחר"  # the lenient sibling still defaults

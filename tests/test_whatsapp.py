@@ -19,6 +19,18 @@ from gadash.models import WorkEntry
 from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 
 
+def _fake_gemini(monkeypatch, fields: dict):
+    """Make the extraction step return `fields` without calling Gemini."""
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    response = MagicMock()
+    response.text = json.dumps(fields)
+    model = MagicMock()
+    model.generate_content.return_value = response
+    genai = MagicMock()
+    genai.GenerativeModel.return_value = model
+    monkeypatch.setattr("gadash.ai_extract._genai", genai)
+
+
 def _state(phone: str) -> str:
     """Conversation state as stored in Postgres. A worker with nothing pending
     has no row at all, which reads as IDLE."""
@@ -475,16 +487,6 @@ class TestPersistentConversations:
     restarts, and every message re-derives a registered worker from the
     workers table instead of trusting a cached copy."""
 
-    def _fake_gemini(self, monkeypatch, fields: dict):
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        response = MagicMock()
-        response.text = json.dumps(fields)
-        model = MagicMock()
-        model.generate_content.return_value = response
-        genai = MagicMock()
-        genai.GenerativeModel.return_value = model
-        monkeypatch.setattr("gadash.ai_extract._genai", genai)
-
     def test_registration_progress_is_stored_then_cleared(self, mock_gsheet):
         from gadash import auth
         from gadash.workers import _add_worker
@@ -507,7 +509,7 @@ class TestPersistentConversations:
         from gadash.workers import _add_worker, _link_worker_whatsapp
         _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
         _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000031")
-        self._fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום", "שעות": "2"})
+        _fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום", "שעות": "2"})
 
         whatsapp.handle_message("972500000031", "גזמתי אצל גל שעתיים", None)
         row = db.session.get(WhatsAppSession, "972500000031")
@@ -525,7 +527,7 @@ class TestPersistentConversations:
         from gadash.workers import _add_worker, _link_worker_whatsapp
         _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
         _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000032")
-        self._fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום"})
+        _fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום"})
         whatsapp.handle_message("972500000032", "גזמתי אצל גל", None)
 
         row = db.session.get(WhatsAppSession, "972500000032")
@@ -643,3 +645,164 @@ class TestDeleteLast:
         whatsapp.handle_message(self.PHONE, "כן", None)
         assert self._clients(t) == []
         assert self._clients(other) == ["אצלם"]
+
+
+PENDING = {"שם לקוח": "גל", "תאריך": "2026-10-20", "עבודה": "חריש", "שעות": "3"}
+
+
+def _start_pending_report(mock_gsheet, monkeypatch, phone="972500000050"):
+    """A linked worker whose report is waiting for כן/לא."""
+    from gadash.workers import _add_worker, _link_worker_whatsapp
+    _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+    _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", phone)
+    _fake_gemini(monkeypatch, PENDING)
+    whatsapp.handle_message(phone, "דיווח", None)
+    assert _state(phone) == "CONFIRM"
+    return phone
+
+
+def _pending_fields(phone):
+    return whatsapp._load_session(phone)["pending_fields"]
+
+
+class TestNaturalYesNo:
+
+    @pytest.mark.parametrize("text", ["כן", "כן.", " כן  ", "אישור", "מאשר", "OK", "Yes!", "y", "👍", "👍🏽", "👍️"])
+    def test_yes_variants(self, text):
+        assert whatsapp._is_yes(text) is True
+        assert whatsapp._is_no(text) is False
+
+    @pytest.mark.parametrize("text", ["לא", "לא.", "ביטול", "בטל", "No", "n", "👎", "👎🏿"])
+    def test_no_variants(self, text):
+        assert whatsapp._is_no(text) is True
+        assert whatsapp._is_yes(text) is False
+
+    @pytest.mark.parametrize("text", ["אולי", "כן אבל", "כן כן", "", "😀", "לא יודע"])
+    def test_anything_else_is_neither(self, text):
+        assert whatsapp._is_yes(text) is False
+        assert whatsapp._is_no(text) is False
+
+    @pytest.mark.parametrize("text", ["כן.", "אישור", "👍", "👍🏽", "OK", "Yes!"])
+    def test_any_yes_saves_the_report(self, mock_gsheet, monkeypatch, text):
+        from gadash.db import load_work_entries
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        assert "נשמר" in whatsapp.handle_message(phone, text, None)
+        assert len(load_work_entries(mock_gsheet.tenant_id)) == 1
+
+    @pytest.mark.parametrize("text", ["לא.", "ביטול", "👎", "No"])
+    def test_any_no_cancels_the_report(self, mock_gsheet, monkeypatch, text):
+        from gadash.db import load_work_entries
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        assert "בוטל" in whatsapp.handle_message(phone, text, None)
+        assert load_work_entries(mock_gsheet.tenant_id).empty
+        assert _state(phone) == "IDLE"
+
+    def test_yes_variant_also_confirms_a_deletion(self, mock_gsheet):
+        from gadash.db import append_work_entry, load_work_entries
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+        t = mock_gsheet.tenant_id
+        _add_worker(t, "דני", "pw12345")
+        _link_worker_whatsapp(t, "דני", "972500000051")
+        append_work_entry(t, WorkEntry(client="x", date="2026-10-20", task="חריש", entered_by="דני"))
+        whatsapp.handle_message("972500000051", "מחק אחרון", None)
+        assert "נמחקה" in whatsapp.handle_message("972500000051", "אישור", None)
+        assert load_work_entries(t).empty
+
+
+class TestEditBeforeSaving:
+    """"שנה <שדה> ל<ערך>" fixes one field of the pending report, so a worker
+    doesn't have to re-send the whole message when only the hours or the task
+    type came out wrong."""
+
+    @pytest.mark.parametrize("command, key, expected", [
+        ("שנה שעות ל-5",              "שעות",   "5"),
+        ("שנה שעות 5.5",              "שעות",   "5.5"),
+        ("שנה שעות: 7",               "שעות",   "7"),
+        ("שנה שעות ל5,5",             "שעות",   "5.5"),
+        ("שנה שעות ל-5.0",            "שעות",   "5"),
+        ("תקן עבודה לדישון",          "עבודה",  "דישון"),
+        ("שנה עבודה ל-בציר",          "עבודה",  "בציר"),
+        ("שנה עבודה ריסוס חומרים",    "עבודה",  "ריסוס"),
+        ("שנה לקוח לדני",             "שם לקוח", "דני"),
+        ("שנה שם לקוח לדני",          "שם לקוח", "דני"),
+        ("שנה לקוח ללוי",             "שם לקוח", "לוי"),
+        ("שנה חלקה לחלקה ב",          "שם חלקה", "חלקה ב"),
+        ("שנה גידול לחיטה",           "גידול",  "חיטה"),
+        ("שנה הערות ל-הגיע מאוחר",    "הערות",  "הגיע מאוחר"),
+        ("שנה תאריך ל-2026-10-19",    "תאריך",  "2026-10-19"),
+        ("שנה תאריך ל19/10/2026",     "תאריך",  "2026-10-19"),
+        ("שנה תאריך ל19.10.2026",     "תאריך",  "2026-10-19"),
+    ])
+    def test_valid_edit_updates_that_field_only(self, mock_gsheet, monkeypatch, command, key, expected):
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        before = dict(_pending_fields(phone))
+        reply = whatsapp.handle_message(phone, command, None)
+
+        assert "עודכן" in reply and expected in reply
+        after = _pending_fields(phone)
+        assert after[key] == expected
+        assert {k: v for k, v in after.items() if k != key} == {k: v for k, v in before.items() if k != key}
+        assert _state(phone) == "CONFIRM"  # still waiting for כן/לא
+
+    def test_relative_dates(self, mock_gsheet, monkeypatch):
+        from datetime import date as d
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        whatsapp.handle_message(phone, "שנה תאריך לאתמול", None)
+        assert _pending_fields(phone)["תאריך"] == (d.today() - timedelta(days=1)).isoformat()
+        whatsapp.handle_message(phone, "שנה תאריך להיום", None)
+        assert _pending_fields(phone)["תאריך"] == d.today().isoformat()
+
+    @pytest.mark.parametrize("command, expected_in_reply", [
+        ("שנה שעות לכמה",          "מספר גדול מ-0"),
+        ("שנה שעות ל-0",           "מספר גדול מ-0"),
+        ("שנה שעות ל-nan",         "מספר גדול מ-0"),
+        ("שנה שעות ל-1e999",       "מספר גדול מ-0"),
+        ("שנה עבודה לשחייה",       "האפשרויות"),
+        ("שנה תאריך ל-2026-13-45", "לא הבנתי את התאריך"),
+        ("שנה תאריך ל31/02",       "לא הבנתי את התאריך"),
+        ("שנה פרח ל-5",            "לא הבנתי איזה שדה"),
+        ("שנה",                    "לא הבנתי איזה שדה"),
+        ("תקן את זה",              "לא הבנתי איזה שדה"),
+        ("שנה לקוח",               "חסר ערך"),
+        ("שנה לקוח ל",             "חסר ערך"),
+    ])
+    def test_invalid_edit_is_explained_and_changes_nothing(self, mock_gsheet, monkeypatch, command, expected_in_reply):
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        before = dict(_pending_fields(phone))
+        reply = whatsapp.handle_message(phone, command, None)
+        assert expected_in_reply in reply
+        assert _pending_fields(phone) == before
+        assert _state(phone) == "CONFIRM"
+
+    def test_words_that_merely_start_like_the_verb_are_not_edits(self, mock_gsheet, monkeypatch):
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        before = dict(_pending_fields(phone))
+        reply = whatsapp.handle_message(phone, "שנהב אצל גל", None)
+        assert "לתיקון" in reply  # the generic reprompt, not an edit attempt
+        assert _pending_fields(phone) == before
+
+    def test_edits_accumulate_and_the_corrected_report_is_what_gets_saved(self, mock_gsheet, monkeypatch):
+        from gadash.db import load_work_entries
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        whatsapp.handle_message(phone, "שנה שעות ל-5", None)
+        whatsapp.handle_message(phone, "שנה עבודה לדישון", None)
+        assert "נשמר" in whatsapp.handle_message(phone, "כן", None)
+
+        row = load_work_entries(mock_gsheet.tenant_id).iloc[0]
+        assert (row["שם לקוח"], row["עבודה"], row["שעות"], row["תאריך"]) == ("גל", "דישון", "5", "2026-10-20")
+
+    def test_an_edit_refreshes_the_session_expiry(self, mock_gsheet, monkeypatch):
+        phone = _start_pending_report(mock_gsheet, monkeypatch)
+        row = db.session.get(WhatsAppSession, phone)
+        row.updated_at = datetime.now(timezone.utc) - whatsapp.SESSION_TTL + timedelta(minutes=1)  # about to expire
+        db.session.commit()
+        whatsapp.handle_message(phone, "שנה שעות ל-5", None)
+        assert datetime.now(timezone.utc) - db.session.get(WhatsAppSession, phone).updated_at < timedelta(minutes=1)
+
+    def test_the_prompt_teaches_the_edit_command(self, mock_gsheet, monkeypatch):
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000052")
+        _fake_gemini(monkeypatch, PENDING)
+        prompt = whatsapp.handle_message("972500000052", "דיווח", None)
+        assert "שנה שעות ל-5" in prompt and "שנה עבודה לדישון" in prompt

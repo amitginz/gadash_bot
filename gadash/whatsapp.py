@@ -20,8 +20,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 
 import requests
 from sqlalchemy import delete
@@ -30,7 +32,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from gadash import ai_extract
 from gadash.auth import get_tenant_id_by_slug
 from gadash.db import delete_work_entry_by, last_work_entry_by, log_audit
-from gadash.models import WorkEntry
+from gadash.models import VALID_TASKS, WorkEntry
 from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 from gadash.service import create_entry
 from gadash.workers import (
@@ -296,16 +298,127 @@ def _step_report(session: dict, text: str, audio_bytes: bytes | None) -> str:
 
     session["pending_fields"] = fields
     session["state"] = "CONFIRM"
+    return _confirm_prompt(fields)
+
+
+def _confirm_prompt(fields: dict, intro: str = "") -> str:
     return (
-        f"📋 בדוק שהפרטים נכונים:\n\n{_format_summary(fields)}\n\n"
-        "משהו לא נכון (למשל סוג העבודה)? שלח *לא* ונסה שוב עם ניסוח ברור יותר.\n"
-        "הכל תקין? שלח *כן* לשמירה."
+        f"{intro}📋 בדוק שהפרטים נכונים:\n\n{_format_summary(fields)}\n\n"
+        "משהו לא נכון? שלח *שנה* ושדה, למשל: *שנה שעות ל-5* או *שנה עבודה לדישון*.\n"
+        "הכל תקין? שלח *כן* לשמירה, או *לא* לביטול."
     )
+
+
+# ── Natural-language yes / no ────────────────────────────────────────────────
+
+_YES = {"כן", "אישור", "מאשר", "ok", "okay", "yes", "y", "👍"}
+_NO = {"לא", "ביטול", "בטל", "no", "n", "👎"}
+
+
+def _normalize_answer(text: str) -> str:
+    """Lower-cased, with surrounding space/punctuation and emoji skin-tone or
+    variation modifiers removed, so "כן.", " Yes! " and 👍🏽 all compare equal
+    to their plain forms."""
+    text = re.sub("[\U0001F3FB-\U0001F3FF\uFE0F]", "", text.strip().lower())
+    return text.strip(" .!,")
+
+
+def _is_yes(text: str) -> bool:
+    return _normalize_answer(text) in _YES
+
+
+def _is_no(text: str) -> bool:
+    return _normalize_answer(text) in _NO
+
+
+# ── Correcting a pending report ──────────────────────────────────────────────
+
+_FIELD_BY_LABEL = {label: key for key, (_, label) in FIELD_DISPLAY.items()}
+_EDIT_VERBS = {"שנה", "תקן"}
+
+
+def _parse_date(text: str) -> str | None:
+    text = text.strip()
+    today = date.today()
+    if text == "היום":
+        return today.isoformat()
+    if text == "אתמול":
+        return (today - timedelta(days=1)).isoformat()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d.%m.%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            pass
+    m = re.fullmatch(r"(\d{1,2})[./](\d{1,2})", text)  # day/month, this year
+    if m:
+        try:
+            return date(today.year, int(m[2]), int(m[1])).isoformat()
+        except ValueError:
+            pass
+    return None
+
+
+def _clean_edit_value(raw: str) -> str:
+    """"שנה שעות ל-5" / "לדישון" / ": 5" -> the bare value. In "שנה X ל…" the
+    ל is the Hebrew "to", so exactly one leading ל is dropped (a name that
+    itself starts with ל is written with it doubled: "ללוי")."""
+    value = raw.strip()
+    if value.startswith("ל"):
+        value = value[1:]
+    return value.lstrip(":=-־ ").strip()
+
+
+def _validated_edit(key: str, value: str) -> tuple[str | None, str | None]:
+    """(normalised value, None) or (None, error message)."""
+    if key == "עבודה":
+        task = ai_extract.match_task(value)
+        if task is None:
+            return None, "סוג עבודה לא מוכר. האפשרויות: " + ", ".join(sorted(VALID_TASKS)) + "."
+        return task, None
+    if key == "שעות":
+        try:
+            hours = float(value.replace(",", "."))
+        except ValueError:
+            hours = float("nan")
+        if not math.isfinite(hours) or hours <= 0:
+            return None, "שעות צריכות להיות מספר גדול מ-0, למשל: *שנה שעות ל-5*."
+        return (str(int(hours)) if hours.is_integer() else str(hours)), None
+    if key == "תאריך":
+        parsed = _parse_date(value)
+        if parsed is None:
+            return None, "לא הבנתי את התאריך. אפשר: 2026-10-19, 19/10/2026, היום או אתמול."
+        return parsed, None
+    return value, None
+
+
+def _step_edit(session: dict, text: str) -> str | None:
+    """Apply a "שנה <שדה> ל<ערך>" correction to the pending report. None if
+    `text` isn't an edit command at all."""
+    tokens = text.split()
+    if not tokens or tokens[0] not in _EDIT_VERBS:
+        return None
+    rest = tokens[1:]
+    if len(rest) > 1 and rest[0] == "שם":  # "שנה שם לקוח ל…"
+        rest = rest[1:]
+    label, raw_value = (rest[0].rstrip(":") if rest else ""), " ".join(rest[1:])  # "שעות: 7"
+    fields = session["pending_fields"]
+    key = _FIELD_BY_LABEL.get(label)
+    if key is None:
+        return ("לא הבנתי איזה שדה לשנות. השדות: " + ", ".join(_FIELD_BY_LABEL) +
+                ".\nלמשל: *שנה שעות ל-5*")
+    value = _clean_edit_value(raw_value)
+    if not value:
+        return f"חסר ערך חדש ל{label}. למשל: *שנה {label} ל…*"
+    new_value, error = _validated_edit(key, value)
+    if error:
+        return error
+    fields[key] = new_value
+    return _confirm_prompt(fields, intro="✏️ עודכן.\n\n")
 
 
 def _step_confirm(session: dict, text: str) -> str:
     fields = session.get("pending_fields", {})
-    if text == "כן":
+    if _is_yes(text):
         tenant_id, worker_name = session["tenant_id"], session["worker_name"]
         session.pop("pending_fields", None)
         session["state"] = "IDLE"
@@ -317,11 +430,14 @@ def _step_confirm(session: dict, text: str) -> str:
             return f"❌ שגיאת אימות: {e}"
         except Exception as e:
             return f"❌ שגיאה בשמירה: {e}"
-    if text == "לא":
+    if _is_no(text):
         session.pop("pending_fields", None)
         session["state"] = "IDLE"
         return "בוטל."
-    return "שלח *כן* לשמירה או *לא* לביטול."
+    edited = _step_edit(session, text)
+    if edited is not None:
+        return edited
+    return "שלח *כן* לשמירה, *לא* לביטול, או *שנה* ושדה לתיקון."
 
 
 _DELETE_LAST_COMMANDS = {"מחק אחרון", "מחק את האחרון"}
@@ -348,7 +464,7 @@ def _step_delete_last(session: dict) -> str:
 
 
 def _step_confirm_delete(session: dict, text: str) -> str:
-    if text == "כן":
+    if _is_yes(text):
         tenant_id, worker_name = session["tenant_id"], session["worker_name"]
         row_id = session.pop("delete_row_id", None)
         detail = session.pop("delete_detail", "")
@@ -357,7 +473,7 @@ def _step_confirm_delete(session: dict, text: str) -> str:
             return "הרשומה כבר לא קיימת."
         log_audit(tenant_id, "undo", worker_name, detail)
         return f"✅ הרשומה נמחקה:\n{detail}"
-    if text == "לא":
+    if _is_no(text):
         session.pop("delete_row_id", None)
         session.pop("delete_detail", None)
         session["state"] = "IDLE"

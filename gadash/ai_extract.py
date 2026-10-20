@@ -53,12 +53,20 @@ def _strip_json_fences(raw: str) -> str:
     return re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE).strip()
 
 
-def _normalize_task(text: str) -> str:
-    """Map free-text task guesses onto the fixed VALID_TASKS enum, defaulting to 'אחר'."""
+def match_task(text: str) -> str | None:
+    """The VALID_TASKS entry `text` names (exactly, or as a substring), else
+    None. Unlike _normalize_task this never falls back to 'אחר' — for callers
+    that must tell "unrecognised" apart from a genuine "other"."""
     text = (text or "").strip()
     if text in VALID_TASKS:
         return text
-    matched = next((t for t in VALID_TASKS if t in text), None)
+    return next((t for t in VALID_TASKS if t in text), None)
+
+
+def _normalize_task(text: str) -> str:
+    """Map free-text task guesses onto the fixed VALID_TASKS enum, defaulting to 'אחר'."""
+    text = (text or "").strip()
+    matched = match_task(text)
     if matched:
         return matched
     if text:
