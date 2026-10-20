@@ -174,6 +174,17 @@ class TestOwnerScopedEntries:
             self._add(t2, "אצל קבלן ב", "דני")
             assert gdb.last_work_entry_by(t1, "דני") is None
 
+    def test_load_can_be_limited_to_one_workers_entries(self, app_ctx, tenants):
+        t1, t2 = tenants
+        with app_ctx.app_context():
+            self._add(t1, "ראשון של דני", "דני")
+            self._add(t1, "של אורי", "אורי")
+            self._add(t1, "שני של דני", " דני ")  # stray spaces still match
+            self._add(t2, "אצל קבלן ב", "דני")
+            assert list(gdb.load_work_entries(t1, entered_by="דני")["שם לקוח"]) == ["ראשון של דני", "שני של דני"]
+            assert gdb.load_work_entries(t1, entered_by="מישהו אחר").empty
+            assert len(gdb.load_work_entries(t1)) == 3  # unfiltered callers are unchanged
+
     def test_delete_removes_own_row(self, app_ctx, tenants):
         t1, _ = tenants
         with app_ctx.app_context():

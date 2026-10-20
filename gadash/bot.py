@@ -61,6 +61,13 @@ def _tenant_id(context: ContextTypes.DEFAULT_TYPE) -> int:
     return context.user_data["_tenant_id"]
 
 
+def _my_entries(context: ContextTypes.DEFAULT_TYPE):
+    """Only the entries the signed-in worker entered — the recent list, the
+    search, and the edit picker all read through this, so a worker never sees
+    another worker's rows (the website's worker portal behaves the same)."""
+    return load_work_entries(_tenant_id(context), entered_by=context.user_data["_worker_name"])
+
+
 def _recent_clients_markup(tenant_id: int):
     try:
         df = load_work_entries(tenant_id)
@@ -187,11 +194,11 @@ async def _handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
 
 async def bot_recent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = load_work_entries(_tenant_id(context))
+        df = _my_entries(context)
         if df.empty:
-            await update.message.reply_text("אין עבודות רשומות עדיין.", reply_markup=_menu_markup())
+            await update.message.reply_text("אין לך עבודות רשומות עדיין.", reply_markup=_menu_markup())
             return
-        lines = ["📄 5 העבודות האחרונות:\n"]
+        lines = ["📄 5 העבודות האחרונות שלך:\n"]
         for _, row in df.tail(5).iterrows():
             lines.append(
                 f"• {row.get('תאריך','')} | {row.get('עבודה','')} | "
@@ -228,9 +235,9 @@ async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def bot_edit_last(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        df = load_work_entries(_tenant_id(context))
+        df = _my_entries(context)
         if df.empty:
-            await update.message.reply_text("אין עבודות לעריכה.", reply_markup=_menu_markup())
+            await update.message.reply_text("אין לך עבודות לעריכה.", reply_markup=_menu_markup())
             return MENU
         tail = df.tail(5)
         lines = ["✏️ בחר רשומה לעריכה:\n"]
@@ -258,13 +265,17 @@ async def bot_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row_ids = context.user_data.get("_edit_row_ids", [])
         if 1 <= n <= len(row_ids):
             row_id = row_ids[n - 1]
-            df = load_work_entries(_tenant_id(context))
-            row = df[df["_row_id"] == row_id].iloc[0]
-            details = "\n".join(f"• {col}: {row.get(col, '')}" for col in COLUMNS)
-            await update.message.reply_text(
-                f"✏️ פרטי הרשומה:\n\n{details}\n\n🔗 לעריכה באתר:\n{WEB_APP_URL}/edit/{row_id}",
-                reply_markup=_menu_markup(),
-            )
+            matches = _my_entries(context)
+            matches = matches[matches["_row_id"] == row_id]
+            if matches.empty:
+                await update.message.reply_text("הרשומה כבר לא קיימת.", reply_markup=_menu_markup())
+            else:
+                row = matches.iloc[0]
+                details = "\n".join(f"• {col}: {row.get(col, '')}" for col in COLUMNS)
+                await update.message.reply_text(
+                    f"✏️ פרטי הרשומה:\n\n{details}\n\n🔗 לעריכה באתר:\n{WEB_APP_URL}/edit/{row_id}",
+                    reply_markup=_menu_markup(),
+                )
         else:
             await update.message.reply_text("בחר מספר מהרשימה.", reply_markup=_menu_markup())
     except ValueError:
@@ -276,7 +287,7 @@ async def bot_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def bot_search_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.message.text.strip()
     try:
-        df = load_work_entries(_tenant_id(context))
+        df = _my_entries(context)
         results = df[df["שם לקוח"].str.contains(query, case=False, na=False)]
         if results.empty:
             await update.message.reply_text(f"לא נמצאו תוצאות עבור '{query}'.", reply_markup=_menu_markup())

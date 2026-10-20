@@ -44,9 +44,14 @@ _FIELD_MAP = {
 
 # ── Work entries (main "Data" sheet equivalent) ─────────────────────────────
 
-def load_work_entries(tenant_id: int, force_refresh: bool = False) -> pd.DataFrame:
-    rows = (WorkEntryRow.query.filter_by(tenant_id=tenant_id)
-            .order_by(WorkEntryRow.id).all())
+def load_work_entries(tenant_id: int, force_refresh: bool = False,
+                      entered_by: str | None = None) -> pd.DataFrame:
+    """All of the tenant's entries, or — with `entered_by` — only that
+    worker's (same trimmed, case-insensitive name match as last_work_entry_by)."""
+    query = WorkEntryRow.query.filter_by(tenant_id=tenant_id)
+    if entered_by is not None:
+        query = query.filter(_entered_by_matches(entered_by))
+    rows = query.order_by(WorkEntryRow.id).all()
     records = [{
         "שם לקוח": r.client, "תאריך": r.date, "עבודה": r.task,
         "שם חלקה": r.field_name or "", "גידול": r.crop or "",

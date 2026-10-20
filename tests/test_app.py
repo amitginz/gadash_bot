@@ -765,10 +765,9 @@ class TestVoiceEntry:
 
 
 
-class TestTelegramUndo:
-    """/undo used to delete the tenant's last row — whoever entered it — with
-    no confirmation. It now offers only the caller's own last entry (matched
-    on the verified worker name) and asks first."""
+class _TelegramHelpers:
+    """Fake Telegram Update/context plus tiny DB seeding helpers (not collected
+    as tests — see the Test* classes below)."""
 
     def _update(self, text="", display_name="Telegram Display Name"):
         from unittest.mock import AsyncMock, MagicMock
@@ -794,6 +793,12 @@ class TestTelegramUndo:
     def _clients(self, tenant_id):
         from gadash.db import load_work_entries
         return list(load_work_entries(tenant_id)["שם לקוח"])
+
+
+class TestTelegramUndo(_TelegramHelpers):
+    """/undo used to delete the tenant's last row — whoever entered it — with
+    no confirmation. It now offers only the caller's own last entry (matched
+    on the verified worker name) and asks first."""
 
     def test_offers_only_the_callers_own_last_entry_then_deletes_it_on_yes(self, mock_gsheet):
         import asyncio
@@ -887,3 +892,99 @@ class TestTelegramUndo:
         import gadash.bot as bot
         src = inspect.getsource(bot.start_telegram_bot)
         assert "CONFIRM_UNDO" in src and "confirm_undo" in src
+
+
+
+class TestTelegramShowsOnlyOwnEntries:
+    """The recent list, the search, and the edit picker used to read the whole
+    tenant. They now read only the signed-in worker's entries, like the
+    website's worker portal."""
+
+    helpers = _TelegramHelpers()
+
+    def _seed(self, t):
+        for client, by in [("של-דני-1", "דני"), ("של-אורי-1", "אורי"), ("של-דני-2", "דני"), ("עוד-של-אורי", "אורי")]:
+            self.helpers._entry(t, client, by)
+
+    def test_recent_list_shows_only_own_entries(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        self._seed(mock_gsheet.tenant_id)
+        update = self.helpers._update()
+        asyncio.run(bot.bot_recent(update, self.helpers._context(mock_gsheet.tenant_id, "דני")))
+        text = self.helpers._replies(update)[0]
+        assert text.count("דני") == 2 and "אורי" not in text
+
+    def test_recent_list_when_the_worker_has_none(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        self.helpers._entry(mock_gsheet.tenant_id, "של-אורי", "אורי")
+        update = self.helpers._update()
+        asyncio.run(bot.bot_recent(update, self.helpers._context(mock_gsheet.tenant_id, "דני")))
+        assert "אין לך עבודות" in self.helpers._replies(update)[0]
+
+    def test_search_finds_only_own_entries(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        self._seed(mock_gsheet.tenant_id)
+        context = self.helpers._context(mock_gsheet.tenant_id, "דני")
+
+        both = self.helpers._update("של")  # matches all four clients in the tenant
+        asyncio.run(bot.bot_search_results(both, context))
+        assert "נמצאו 2" in self.helpers._replies(both)[0]
+
+        theirs = self.helpers._update("עוד-של-אורי")  # exists, but isn't דני's
+        asyncio.run(bot.bot_search_results(theirs, context))
+        assert "לא נמצאו תוצאות" in self.helpers._replies(theirs)[0]
+
+    def test_edit_picker_offers_only_own_entries(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        from gadash.db import load_work_entries
+        t = mock_gsheet.tenant_id
+        self._seed(t)
+        context = self.helpers._context(t, "דני")
+        update = self.helpers._update()
+        assert asyncio.run(bot.bot_edit_last(update, context)) == bot.EDIT_SELECT
+
+        own_ids = list(load_work_entries(t, entered_by="דני")["_row_id"])
+        assert context.user_data["_edit_row_ids"] == own_ids and len(own_ids) == 2
+        text = self.helpers._replies(update)[0]
+        assert "2." in text and "3." not in text
+
+    def test_edit_picker_when_the_worker_has_none(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        self.helpers._entry(mock_gsheet.tenant_id, "של-אורי", "אורי")
+        update = self.helpers._update()
+        assert asyncio.run(bot.bot_edit_last(update, self.helpers._context(mock_gsheet.tenant_id, "דני"))) == bot.MENU
+        assert "אין לך עבודות" in self.helpers._replies(update)[0]
+
+    def test_choosing_an_entry_shows_its_details(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        t = mock_gsheet.tenant_id
+        self._seed(t)
+        context = self.helpers._context(t, "דני")
+        asyncio.run(bot.bot_edit_last(self.helpers._update(), context))
+        pick = self.helpers._update("1")
+        asyncio.run(bot.bot_edit_select(pick, context))
+        reply = self.helpers._replies(pick)[0]
+        assert "של-דני-1" in reply and "/edit/" in reply
+
+    def test_a_stale_or_foreign_row_id_cannot_reveal_someone_elses_entry(self, mock_gsheet):
+        """The picked id comes from per-conversation state; even if it pointed
+        at another worker's row, the details are read through the own-entries
+        view, so nothing leaks."""
+        import asyncio
+        import gadash.bot as bot
+        from gadash.db import load_work_entries
+        t = mock_gsheet.tenant_id
+        self._seed(t)
+        foreign_id = int(load_work_entries(t, entered_by="אורי").iloc[-1]["_row_id"])
+        context = self.helpers._context(t, "דני")
+        context.user_data["_edit_row_ids"] = [foreign_id]
+        pick = self.helpers._update("1")
+        asyncio.run(bot.bot_edit_select(pick, context))
+        reply = self.helpers._replies(pick)[0]
+        assert "כבר לא קיימת" in reply and "עוד-של-אורי" not in reply
