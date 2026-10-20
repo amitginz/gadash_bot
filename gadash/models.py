@@ -85,7 +85,7 @@ class WorkEntry:
         )
 
     @classmethod
-    def from_bot(cls, user_data: dict, full_name: str) -> "WorkEntry":
+    def from_bot(cls, user_data: dict, entered_by: str) -> "WorkEntry":
         return cls(
             client=user_data.get("שם לקוח", ""),
             date=user_data.get("תאריך", ""),
@@ -97,5 +97,5 @@ class WorkEntry:
             tool=user_data.get("כלי", ""),
             operator=user_data.get("מפעיל", ""),
             notes=user_data.get("הערות", ""),
-            entered_by=full_name,
+            entered_by=entered_by,
         )

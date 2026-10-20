@@ -583,12 +583,13 @@ class TestBotModule:
         from gadash.bot import (MENU, CLIENT, DATE, TASK, FIELD, CROP,
                                  AMOUNT, HOURS, TOOL, OPERATOR, NOTE,
                                  CONFIRM, SEARCH, EDIT_SELECT,
-                                 REGISTER_NAME, REGISTER_PASSWORD)
+                                 REGISTER_TENANT, REGISTER_NAME, REGISTER_PASSWORD,
+                                 CONFIRM_UNDO)
         states = [MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS,
                   TOOL, OPERATOR, NOTE, CONFIRM, SEARCH, EDIT_SELECT,
-                  REGISTER_NAME, REGISTER_PASSWORD]
-        assert len(states) == 16
-        assert len(set(states)) == 16  # all unique
+                  REGISTER_TENANT, REGISTER_NAME, REGISTER_PASSWORD, CONFIRM_UNDO]
+        assert len(states) == 18
+        assert len(set(states)) == 18  # all unique
 
     def test_task_choices_cover_valid_tasks(self):
         from gadash.bot import TASK_CHOICES
@@ -761,3 +762,128 @@ class TestVoiceEntry:
         assert result_state == bot_module.MENU
         processing_msg.edit_text.assert_awaited_once()
         assert "לא הצלחתי" in processing_msg.edit_text.call_args[0][0]
+
+
+
+class TestTelegramUndo:
+    """/undo used to delete the tenant's last row — whoever entered it — with
+    no confirmation. It now offers only the caller's own last entry (matched
+    on the verified worker name) and asks first."""
+
+    def _update(self, text="", display_name="Telegram Display Name"):
+        from unittest.mock import AsyncMock, MagicMock
+        update = MagicMock()
+        update.message.text = text
+        update.message.from_user.full_name = display_name
+        update.message.reply_text = AsyncMock()
+        return update
+
+    def _context(self, tenant_id, worker_name):
+        from unittest.mock import MagicMock
+        context = MagicMock()
+        context.user_data = {"_tenant_id": tenant_id, "_worker_name": worker_name}
+        return context
+
+    def _replies(self, update):
+        return [c.args[0] for c in update.message.reply_text.call_args_list]
+
+    def _entry(self, tenant_id, client, by):
+        from gadash.db import append_work_entry
+        append_work_entry(tenant_id, WorkEntry(client=client, date="2026-10-20", task="חריש", entered_by=by))
+
+    def _clients(self, tenant_id):
+        from gadash.db import load_work_entries
+        return list(load_work_entries(tenant_id)["שם לקוח"])
+
+    def test_offers_only_the_callers_own_last_entry_then_deletes_it_on_yes(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        from gadash.db import read_audit_log
+        t = mock_gsheet.tenant_id
+        self._entry(t, "ראשון", "דני")
+        self._entry(t, "אחרון-של-דני", "דני")
+        self._entry(t, "של-אורי", "אורי")  # newest in the tenant, not דני's
+        context = self._context(t, "דני")
+
+        ask = self._update()
+        assert asyncio.run(bot.bot_undo(ask, context)) == bot.CONFIRM_UNDO
+        assert "אחרון-של-דני" in self._replies(ask)[0] and "של-אורי" not in self._replies(ask)[0]
+        assert len(self._clients(t)) == 3  # asked, not deleted
+
+        yes = self._update("כן")
+        assert asyncio.run(bot.confirm_undo(yes, context)) == bot.MENU
+        assert self._clients(t) == ["ראשון", "של-אורי"]
+        assert any(e["action"] == "undo" and e["user"] == "דני" for e in read_audit_log(t))
+        assert "_undo_row_id" not in context.user_data
+
+    def test_declining_keeps_the_entry(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        t = mock_gsheet.tenant_id
+        self._entry(t, "x", "דני")
+        context = self._context(t, "דני")
+        asyncio.run(bot.bot_undo(self._update(), context))
+        assert asyncio.run(bot.confirm_undo(self._update("לא"), context)) == bot.MENU
+        assert self._clients(t) == ["x"]
+
+    def test_a_worker_with_no_entries_of_their_own_is_told_so(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        t = mock_gsheet.tenant_id
+        self._entry(t, "של-אורי", "אורי")
+        update = self._update()
+        assert asyncio.run(bot.bot_undo(update, self._context(t, "דני"))) == bot.MENU
+        assert "אין לך רשומות" in self._replies(update)[0]
+        assert self._clients(t) == ["של-אורי"]
+
+    def test_telegram_display_name_cannot_be_used_to_reach_another_workers_entry(self, mock_gsheet):
+        """A worker who sets their Telegram name to "דני" gains nothing: the
+        entry is matched on the registered worker name, not the display name."""
+        import asyncio
+        import gadash.bot as bot
+        t = mock_gsheet.tenant_id
+        self._entry(t, "של-דני", "דני")
+        update = self._update(display_name="דני")
+        assert asyncio.run(bot.bot_undo(update, self._context(t, "אורי"))) == bot.MENU
+        assert "אין לך רשומות" in self._replies(update)[0]
+        assert self._clients(t) == ["של-דני"]
+
+    def test_entry_already_gone_by_confirmation_time(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        from gadash.db import delete_work_entry
+        t = mock_gsheet.tenant_id
+        self._entry(t, "x", "דני")
+        context = self._context(t, "דני")
+        asyncio.run(bot.bot_undo(self._update(), context))
+        delete_work_entry(t, context.user_data["_undo_row_id"])  # e.g. removed on the website
+        update = self._update("כן")
+        asyncio.run(bot.confirm_undo(update, context))
+        assert "כבר לא קיימת" in self._replies(update)[0]
+
+    def test_unregistered_caller_is_sent_to_start_instead_of_crashing(self):
+        import asyncio
+        from unittest.mock import MagicMock
+        import gadash.bot as bot
+        from telegram.ext import ConversationHandler
+        context = MagicMock()
+        context.user_data = {}
+        update = self._update()
+        assert asyncio.run(bot.bot_undo(update, context)) == ConversationHandler.END
+        assert "/start" in self._replies(update)[0]
+
+    def test_new_entries_record_the_worker_name_not_the_telegram_display_name(self, mock_gsheet):
+        import asyncio
+        import gadash.bot as bot
+        from gadash.db import load_work_entries
+        t = mock_gsheet.tenant_id
+        context = self._context(t, "דני")
+        context.user_data.update({"שם לקוח": "גל", "תאריך": "2026-10-20", "עבודה": "חריש"})
+        asyncio.run(bot.confirm(self._update("כן", display_name="Some Display Name"), context))
+        assert load_work_entries(t).iloc[0]["מזין"] == "דני"
+
+    def test_confirm_undo_is_wired_into_the_conversation(self):
+        import inspect
+        import gadash.bot as bot
+        src = inspect.getsource(bot.start_telegram_bot)
+        assert "CONFIRM_UNDO" in src and "confirm_undo" in src

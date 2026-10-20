@@ -15,7 +15,7 @@ from telegram.ext import (
 from gadash import ai_extract
 from gadash.auth import get_tenant_id_by_slug
 from gadash.db import (
-    add_subscriber, delete_work_entry, get_subscribers,
+    add_subscriber, delete_work_entry_by, get_subscribers, last_work_entry_by,
     list_tenant_ids, load_work_entries, log_audit,
 )
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
@@ -33,7 +33,7 @@ WEB_APP_URL = os.environ.get("WEB_APP_URL", "http://localhost:8080")
 
 (MENU, CLIENT, DATE, TASK, FIELD, CROP, AMOUNT, HOURS, TOOL, OPERATOR,
  NOTE, CONFIRM, SEARCH, EDIT_SELECT,
- REGISTER_TENANT, REGISTER_NAME, REGISTER_PASSWORD) = range(17)
+ REGISTER_TENANT, REGISTER_NAME, REGISTER_PASSWORD, CONFIRM_UNDO) = range(18)
 
 TASK_CHOICES    = [["חריש", "ריסוס"], ["קציר", "דיסוק"], ["דישון", "השקיה"], ["שתילה", "עישוב"],
                     ["בציר", "מסיק"], ["גיזום", "הדברה"], ["אחר"]]
@@ -459,7 +459,10 @@ async def voice_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "כן":
         try:
-            entry = WorkEntry.from_bot(context.user_data, update.message.from_user.full_name)
+            # The verified worker name, not Telegram's display name: that is
+            # editable by the user (so it can't be an ownership key) and
+            # differs from the name the same worker has on WhatsApp / the site.
+            entry = WorkEntry.from_bot(context.user_data, context.user_data["_worker_name"])
             create_entry(_tenant_id(context), entry, entry.entered_by)
             await update.message.reply_text("✅ נשמר בהצלחה!")
         except ValueError as e:
@@ -476,20 +479,46 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bot_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Offer to delete the caller's own most recent entry. It used to delete
+    the tenant's last row — whoever entered it — without asking."""
+    tenant_id = context.user_data.get("_tenant_id")
+    worker_name = context.user_data.get("_worker_name")
+    if tenant_id is None or worker_name is None:
+        await update.message.reply_text("כדי למחוק רשומה צריך להתחבר קודם — שלח /start.")
+        return ConversationHandler.END
     try:
-        tenant_id = _tenant_id(context)
-        df = load_work_entries(tenant_id)
-        if df.empty:
-            await update.message.reply_text("אין עבודות למחיקה.", reply_markup=_menu_markup())
+        last = last_work_entry_by(tenant_id, worker_name)
+        if last is None:
+            await update.message.reply_text("אין לך רשומות למחיקה.", reply_markup=_menu_markup())
             return MENU
-        last = df.iloc[-1]
-        detail = f"{last.get('שם לקוח','')} | {last.get('תאריך','')} | {last.get('עבודה','')}"
-        last_row_id = int(last["_row_id"])
-        delete_work_entry(tenant_id, last_row_id)
-        log_audit(tenant_id, "undo", update.message.from_user.full_name, detail)
-        await update.message.reply_text(f"✅ הרשומה האחרונה נמחקה:\n{detail}", reply_markup=_menu_markup())
+        detail = f"{last['שם לקוח']} | {last['תאריך']} | {last['עבודה']}"
+        context.user_data["_undo_row_id"] = last["_row_id"]
+        context.user_data["_undo_detail"] = detail
+        await update.message.reply_text(
+            f"🗑️ למחוק את הרשומה האחרונה שלך?\n{detail}",
+            reply_markup=ReplyKeyboardMarkup(CONFIRM_KEYBOARD, resize_keyboard=True),
+        )
+        return CONFIRM_UNDO
     except Exception as e:
         await update.message.reply_text(f"❌ שגיאה: {e}", reply_markup=_menu_markup())
+        return MENU
+
+
+async def confirm_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    row_id = context.user_data.pop("_undo_row_id", None)
+    detail = context.user_data.pop("_undo_detail", "")
+    if update.message.text.strip() == "כן":
+        tenant_id, worker_name = _tenant_id(context), context.user_data["_worker_name"]
+        try:
+            if row_id is not None and delete_work_entry_by(tenant_id, row_id, worker_name):
+                log_audit(tenant_id, "undo", worker_name, detail)
+                await update.message.reply_text(f"✅ הרשומה נמחקה:\n{detail}", reply_markup=_menu_markup())
+            else:
+                await update.message.reply_text("הרשומה כבר לא קיימת.", reply_markup=_menu_markup())
+        except Exception as e:
+            await update.message.reply_text(f"❌ שגיאה: {e}", reply_markup=_menu_markup())
+    else:
+        await update.message.reply_text("בוטל. הרשומה נשארה.", reply_markup=_menu_markup())
     return MENU
 
 
@@ -549,6 +578,7 @@ def start_telegram_bot(flask_app):
             CONFIRM:           [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm)],
             SEARCH:            [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_search_results)],
             EDIT_SELECT:       [MessageHandler(filters.TEXT & ~filters.COMMAND, bot_edit_select)],
+            CONFIRM_UNDO:      [MessageHandler(filters.TEXT & ~filters.COMMAND, confirm_undo)],
             REGISTER_TENANT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, register_tenant)],
             REGISTER_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
             REGISTER_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_password)],
