@@ -657,6 +657,10 @@ def whatsapp_verify():
 
 @app.route("/webhook/whatsapp", methods=["POST"])
 def whatsapp_webhook():
+    if not whatsapp.verify_signature(request.get_data(), request.headers.get("X-Hub-Signature-256")):
+        _logger.warning("[WhatsApp] rejected webhook POST: missing/invalid signature "
+                        "(is WHATSAPP_APP_SECRET set?)")
+        return "forbidden", 403
     payload = request.get_json(force=True, silent=True) or {}
     for msg in whatsapp.parse_incoming(payload):
         if whatsapp.is_duplicate_message(msg["id"]):

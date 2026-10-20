@@ -17,6 +17,8 @@ GOOGLE_CREDS/BOT_TOKEN are missing.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 from collections import deque
@@ -53,6 +55,18 @@ def verify_webhook(mode: str, token: str, challenge: str) -> str | None:
     if mode == "subscribe" and expected and token == expected:
         return challenge
     return None
+
+
+def verify_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    """Meta signs every webhook POST with HMAC-SHA256 of the raw body, keyed
+    by the app secret, in the X-Hub-Signature-256 header ("sha256=<hex>").
+    Without this check anyone who finds the webhook URL can forge a message
+    from any worker's phone number. Fails closed if the secret isn't set."""
+    secret = os.environ.get("WHATSAPP_APP_SECRET")
+    if not secret or not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header[len("sha256="):])
 
 
 def is_configured() -> bool:

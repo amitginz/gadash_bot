@@ -6,6 +6,8 @@ for the Telegram voice feature's tests. The conversation logic itself
 (registration, free-text/voice job reporting, confirm) runs for real against
 a local Postgres, same as every other test this session.
 """
+import hashlib
+import hmac
 import json
 from unittest.mock import MagicMock
 
@@ -378,3 +380,91 @@ class TestDuplicateMessages:
 
         df = load_work_entries(mock_gsheet.tenant_id)
         assert len(df) == 1
+
+
+def _sign(body: bytes, secret: str) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+class TestVerifySignature:
+
+    def test_valid_signature_accepted(self, monkeypatch):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        body = b'{"entry": []}'
+        assert whatsapp.verify_signature(body, _sign(body, "s3cret")) is True
+
+    def test_tampered_body_rejected(self, monkeypatch):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        sig = _sign(b'{"entry": []}', "s3cret")
+        assert whatsapp.verify_signature(b'{"entry": [1]}', sig) is False
+
+    def test_wrong_secret_rejected(self, monkeypatch):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        body = b"{}"
+        assert whatsapp.verify_signature(body, _sign(body, "other")) is False
+
+    def test_missing_or_malformed_header_rejected(self, monkeypatch):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        body = b"{}"
+        digest = hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+        assert whatsapp.verify_signature(body, None) is False
+        assert whatsapp.verify_signature(body, "") is False
+        assert whatsapp.verify_signature(body, digest) is False  # no "sha256=" prefix
+
+    def test_fails_closed_when_secret_not_configured(self, monkeypatch):
+        monkeypatch.delenv("WHATSAPP_APP_SECRET", raising=False)
+        body = b"{}"
+        assert whatsapp.verify_signature(body, _sign(body, "")) is False
+        assert whatsapp.verify_signature(body, _sign(body, "anything")) is False
+
+
+class TestWebhookRouteSignature:
+    """The POST route must not process (or reply to) anything unsigned —
+    otherwise anyone who finds the URL can forge a worker's message."""
+
+    def _post(self, body: bytes, signature: str | None):
+        import app as app_module
+        headers = {"X-Hub-Signature-256": signature} if signature else {}
+        return app_module.app.test_client().post(
+            "/webhook/whatsapp", data=body, content_type="application/json", headers=headers)
+
+    def _payload(self) -> bytes:
+        return json.dumps({"entry": [{"changes": [{"value": {"messages": [
+            {"from": "972500000099", "type": "text", "text": {"body": "היי"}, "id": "wamid.route-1"}
+        ]}}]}]}).encode()
+
+    @pytest.fixture
+    def spies(self, monkeypatch):
+        handle, send = MagicMock(return_value="reply"), MagicMock()
+        monkeypatch.setattr(whatsapp, "handle_message", handle)
+        monkeypatch.setattr(whatsapp, "send_text_message", send)
+        return handle, send
+
+    def test_unsigned_request_rejected_and_not_processed(self, mock_gsheet, monkeypatch, spies):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        resp = self._post(self._payload(), None)
+        assert resp.status_code == 403
+        spies[0].assert_not_called()
+        spies[1].assert_not_called()
+
+    def test_forged_signature_rejected_and_not_processed(self, mock_gsheet, monkeypatch, spies):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        body = self._payload()
+        resp = self._post(body, _sign(body, "attacker-guess"))
+        assert resp.status_code == 403
+        spies[0].assert_not_called()
+
+    def test_rejected_when_secret_not_configured(self, mock_gsheet, monkeypatch, spies):
+        monkeypatch.delenv("WHATSAPP_APP_SECRET", raising=False)
+        body = self._payload()
+        resp = self._post(body, _sign(body, ""))
+        assert resp.status_code == 403
+        spies[0].assert_not_called()
+
+    def test_signed_request_is_processed_and_replied_to(self, mock_gsheet, monkeypatch, spies):
+        monkeypatch.setenv("WHATSAPP_APP_SECRET", "s3cret")
+        body = self._payload()
+        resp = self._post(body, _sign(body, "s3cret"))
+        assert resp.status_code == 200
+        spies[0].assert_called_once_with("972500000099", "היי", None)
+        spies[1].assert_called_once_with("972500000099", "reply")
