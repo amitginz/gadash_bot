@@ -21,13 +21,16 @@ import hashlib
 import hmac
 import logging
 import os
-from collections import deque
+from datetime import datetime, timedelta, timezone
 
 import requests
+from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from gadash import ai_extract
 from gadash.auth import get_tenant_id_by_slug
 from gadash.models import WorkEntry
+from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 from gadash.service import create_entry
 from gadash.workers import (
     _get_worker_by_whatsapp_number, _link_worker_whatsapp,
@@ -37,13 +40,6 @@ from gadash.workers import (
 _logger = logging.getLogger(__name__)
 
 GRAPH_API_VERSION = "v20.0"
-
-# Per-phone-number conversation state — the WhatsApp equivalent of Telegram's
-# context.user_data. In-memory only (lost on restart, same tradeoff the
-# Telegram bot already has); a worker mid-registration or mid-confirm just
-# has to send their last message again.
-_sessions: dict = {}
-
 
 # ── Webhook verification & delivery ─────────────────────────────────────────
 
@@ -122,29 +118,28 @@ def parse_incoming(payload: dict) -> list:
 
 # WhatsApp Cloud API retries webhook delivery when it doesn't get a fast
 # enough response (our handler calls out to Gemini and the Send API before
-# returning) — the same message can arrive more than once. Track recently
-# seen message ids (wamid) so a retry is a no-op instead of a duplicate save.
-# Bounded so long-running processes don't leak memory; in-memory only, same
-# restart tradeoff as _sessions.
-_seen_message_ids: deque = deque(maxlen=2000)
-_seen_message_ids_set: set = set()
+# returning) — the same message can arrive more than once, even at the same
+# instant. Message ids (wamid) are recorded in Postgres rather than process
+# memory so a retry landing after a restart or deploy is still caught, and the
+# INSERT ... ON CONFLICT is atomic: two deliveries racing each other can't
+# both conclude they were first.
+DEDUP_RETENTION = timedelta(days=7)
 
 
 def is_duplicate_message(message_id: str | None) -> bool:
     """Checks-and-marks: the first call for a given message id returns False
-    and remembers it; every subsequent call (a Meta webhook retry) returns
+    and records it; every subsequent call (a Meta webhook retry) returns
     True. Callers should skip all processing — audio download included —
     for a duplicate, not just the save step."""
     if not message_id:
         return False
-    if message_id in _seen_message_ids_set:
-        return True
-    if len(_seen_message_ids) >= _seen_message_ids.maxlen:
-        oldest = _seen_message_ids.popleft()
-        _seen_message_ids_set.discard(oldest)
-    _seen_message_ids.append(message_id)
-    _seen_message_ids_set.add(message_id)
-    return False
+    inserted = db.session.execute(
+        pg_insert(WhatsAppProcessedMessage).values(message_id=message_id).on_conflict_do_nothing()
+    )
+    db.session.execute(delete(WhatsAppProcessedMessage).where(
+        WhatsAppProcessedMessage.created_at < datetime.now(timezone.utc) - DEDUP_RETENTION))
+    db.session.commit()
+    return inserted.rowcount == 0
 
 
 # ── Conversation ─────────────────────────────────────────────────────────────
@@ -171,19 +166,59 @@ FIELD_DISPLAY = {
 }
 
 
+# A conversation left half-finished is dropped after this long — otherwise a
+# stray "כן" days later would save a report the worker had forgotten about.
+SESSION_TTL = timedelta(minutes=30)
+
+
+def _load_session(phone: str) -> dict | None:
+    """The stored in-progress conversation for `phone`, or None."""
+    row = db.session.get(WhatsAppSession, phone)
+    if row is None:
+        return None
+    if datetime.now(timezone.utc) - row.updated_at > SESSION_TTL:
+        db.session.delete(row)
+        db.session.commit()
+        return None
+    return {"state": row.state, **row.data}
+
+
+def _save_session(phone: str, session: dict) -> None:
+    """Persist a conversation in progress; a finished one (IDLE) has no row —
+    a registered worker with nothing pending is re-derived from the workers
+    table on every message, so removing or changing a worker takes effect
+    immediately instead of whenever the process next restarts."""
+    row = db.session.get(WhatsAppSession, phone)
+    if session["state"] == "IDLE":
+        if row is not None:
+            db.session.delete(row)
+    else:
+        data = {k: v for k, v in session.items() if k != "state"}
+        if row is None:
+            row = WhatsAppSession(phone=phone, state=session["state"], data=data)
+            db.session.add(row)
+        else:
+            row.state, row.data = session["state"], data
+        row.updated_at = datetime.now(timezone.utc)
+    db.session.commit()
+
+
 def handle_message(phone: str, text: str | None, audio_bytes: bytes | None) -> str:
     """Returns the reply text for the caller to send back to `phone`."""
-    if phone not in _sessions:
+    session = _load_session(phone)
+    if session is None:
         worker = _get_worker_by_whatsapp_number(phone)
-        if worker:
-            _sessions[phone] = {"state": "IDLE", "tenant_id": worker["tenant_id"], "worker_name": worker["שם"]}
-        else:
-            _sessions[phone] = {"state": "REGISTER_TENANT"}
+        if not worker:
+            _save_session(phone, {"state": "REGISTER_TENANT"})
             return WELCOME_MESSAGE
-    session = _sessions[phone]
-    state = session["state"]
-    text = (text or "").strip()
+        session = {"state": "IDLE", "tenant_id": worker["tenant_id"], "worker_name": worker["שם"]}
+    reply = _dispatch(phone, session, (text or "").strip(), audio_bytes)
+    _save_session(phone, session)
+    return reply
 
+
+def _dispatch(phone: str, session: dict, text: str, audio_bytes: bytes | None) -> str:
+    state = session["state"]
     if state == "REGISTER_TENANT":
         return _step_register_tenant(session, text)
     if state == "REGISTER_NAME":
@@ -220,9 +255,11 @@ def _step_register_password(phone: str, session: dict, text: str) -> str:
     name = session.get("reg_name", "")
     if tenant_id and _verify_worker(tenant_id, name, text):
         _link_worker_whatsapp(tenant_id, name, phone)
-        _sessions[phone] = {"state": "IDLE", "tenant_id": tenant_id, "worker_name": name}
+        session.clear()
+        session.update(state="IDLE", tenant_id=tenant_id, worker_name=name)
         return f"✅ נרשמת בהצלחה כ-{name}!\nשלח לי הודעה או הקלטה עם פרטי עבודה כדי לדווח."
-    _sessions[phone] = {"state": "REGISTER_TENANT"}
+    session.clear()
+    session["state"] = "REGISTER_TENANT"
     return "סיסמה שגויה. שלח שוב את קוד החברה כדי לנסות מהתחלה."
 
 

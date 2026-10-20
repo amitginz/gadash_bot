@@ -27,7 +27,8 @@ from gadash.db import (
 )
 from gadash.models import WorkEntry
 from gadash.models_db import (
-    AuditLogEntry, Field, Manager, Rate, Subscriber, Tenant, Worker, WorkEntryRow, db,
+    AuditLogEntry, Field, Manager, Rate, Subscriber, Tenant, WhatsAppProcessedMessage,
+    WhatsAppSession, Worker, WorkEntryRow, db,
 )
 
 _SCHEMA_READY = False
@@ -83,7 +84,8 @@ def mock_gsheet():
     """Named to match the pre-Postgres fixture — see module docstring."""
     with app_module.app.app_context():
         _ensure_schema()
-        for model in [WorkEntryRow, Field, Rate, AuditLogEntry, Subscriber, Worker, Manager, Tenant]:
+        for model in [WorkEntryRow, Field, Rate, AuditLogEntry, Subscriber, Worker, Manager, Tenant,
+                      WhatsAppSession, WhatsAppProcessedMessage]:
             model.query.delete()
         db.session.commit()
         yield _TenantState(auth.create_tenant(

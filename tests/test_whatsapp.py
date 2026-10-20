@@ -9,25 +9,20 @@ a local Postgres, same as every other test this session.
 import hashlib
 import hmac
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 from gadash import whatsapp
+from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 
 
-@pytest.fixture(autouse=True)
-def _reset_sessions():
-    """_sessions and the dedup tracker are module-level state — without this,
-    one test's in-progress registration or seen-message-ids would leak into
-    the next test's fresh phone number / message id checks."""
-    whatsapp._sessions.clear()
-    whatsapp._seen_message_ids.clear()
-    whatsapp._seen_message_ids_set.clear()
-    yield
-    whatsapp._sessions.clear()
-    whatsapp._seen_message_ids.clear()
-    whatsapp._seen_message_ids_set.clear()
+def _state(phone: str) -> str:
+    """Conversation state as stored in Postgres. A worker with nothing pending
+    has no row at all, which reads as IDLE."""
+    session = whatsapp._load_session(phone)
+    return session["state"] if session else "IDLE"
 
 
 class TestVerifyWebhook:
@@ -137,7 +132,7 @@ class TestRegistrationFlow:
         as a (probably wrong) company-code guess."""
         reply = whatsapp.handle_message("972509999999", "Hi", None)
         assert reply == whatsapp.WELCOME_MESSAGE
-        assert whatsapp._sessions["972509999999"]["state"] == "REGISTER_TENANT"
+        assert _state("972509999999") == "REGISTER_TENANT"
 
     def test_registers_and_links_worker(self, mock_gsheet):
         from gadash import auth
@@ -165,7 +160,7 @@ class TestRegistrationFlow:
         whatsapp.handle_message(phone, "היי", None)  # consumes the welcome step
         reply = whatsapp.handle_message(phone, "no-such-slug", None)
         assert "לא נמצא" in reply
-        assert whatsapp._sessions[phone]["state"] == "REGISTER_TENANT"
+        assert _state(phone) == "REGISTER_TENANT"
 
     def test_wrong_name_resets_to_tenant_step(self, mock_gsheet):
         from gadash import auth
@@ -175,7 +170,7 @@ class TestRegistrationFlow:
         whatsapp.handle_message(phone, slug, None)
         reply = whatsapp.handle_message(phone, "לא קיים בכלל", None)
         assert "לא נמצא" in reply
-        assert whatsapp._sessions[phone]["state"] == "REGISTER_TENANT"
+        assert _state(phone) == "REGISTER_TENANT"
 
     def test_wrong_password_resets_to_tenant_step(self, mock_gsheet):
         from gadash import auth
@@ -188,23 +183,22 @@ class TestRegistrationFlow:
         whatsapp.handle_message(phone, "דני", None)
         reply = whatsapp.handle_message(phone, "wrong-password", None)
         assert "שגויה" in reply
-        assert whatsapp._sessions[phone]["state"] == "REGISTER_TENANT"
+        assert _state(phone) == "REGISTER_TENANT"
 
     def test_already_linked_worker_skips_registration_after_restart(self, mock_gsheet, monkeypatch):
-        """Simulates the bot process restarting: in-memory _sessions is gone,
-        but the worker is already linked in the DB — the very next message
-        should resolve straight to the report flow, not ask them to register
-        again."""
+        """A worker already linked in the DB has no conversation row and no
+        process memory to rely on — the very next message should resolve
+        straight to the report flow, not ask them to register again."""
         from gadash.workers import _add_worker, _link_worker_whatsapp
         _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
         _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000004")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-        assert "972500000004" not in whatsapp._sessions  # confirms the "restart" premise
+        assert whatsapp._load_session("972500000004") is None
         reply = whatsapp.handle_message("972500000004", "עבדתי היום", None)
 
         assert "לא זמין" in reply  # the report-flow's fallback, not a registration prompt
-        assert whatsapp._sessions["972500000004"]["state"] == "IDLE"
+        assert _state("972500000004") == "IDLE"
 
 
 class TestJobReportFlow:
@@ -232,11 +226,11 @@ class TestJobReportFlow:
         assert "איתמר" in r1
         assert "👤 *לקוח:* איתמר" in r1
         assert "🔧 *עבודה:* ריסוס" in r1
-        assert whatsapp._sessions["972500000010"]["state"] == "CONFIRM"
+        assert _state("972500000010") == "CONFIRM"
 
         r2 = whatsapp.handle_message("972500000010", "כן", None)
         assert "נשמר" in r2
-        assert whatsapp._sessions["972500000010"]["state"] == "IDLE"
+        assert _state("972500000010") == "IDLE"
 
         df = load_work_entries(mock_gsheet.tenant_id)
         assert len(df) == 1
@@ -302,7 +296,7 @@ class TestJobReportFlow:
 
         reply = whatsapp.handle_message("972500000013", "עבדתי היום", None)
         assert "לקוח" in reply
-        assert whatsapp._sessions["972500000013"]["state"] == "IDLE"
+        assert _state("972500000013") == "IDLE"
 
     def test_gemini_unavailable_gives_clear_message(self, mock_gsheet, monkeypatch):
         from gadash.workers import _add_worker, _link_worker_whatsapp
@@ -339,14 +333,18 @@ class TestDuplicateMessages:
         assert whatsapp.is_duplicate_message(None) is False
         assert whatsapp.is_duplicate_message(None) is False
 
-    def test_tracker_is_bounded(self):
-        maxlen = whatsapp._seen_message_ids.maxlen
-        for i in range(maxlen + 10):
-            assert whatsapp.is_duplicate_message(f"wamid.{i}") is False
-        assert len(whatsapp._seen_message_ids) == maxlen
-        assert len(whatsapp._seen_message_ids_set) == maxlen
-        # the earliest ids were evicted to make room — no longer flagged as seen
-        assert whatsapp.is_duplicate_message("wamid.0") is False
+    def test_first_sighting_is_recorded_in_the_database(self):
+        assert whatsapp.is_duplicate_message("wamid.persisted") is False
+        assert db.session.get(WhatsAppProcessedMessage, "wamid.persisted") is not None
+
+    def test_records_past_retention_are_purged(self):
+        old = datetime.now(timezone.utc) - whatsapp.DEDUP_RETENTION - timedelta(hours=1)
+        db.session.add(WhatsAppProcessedMessage(message_id="wamid.ancient", created_at=old))
+        db.session.commit()
+
+        assert whatsapp.is_duplicate_message("wamid.fresh") is False  # triggers the purge
+        assert db.session.get(WhatsAppProcessedMessage, "wamid.ancient") is None
+        assert whatsapp.is_duplicate_message("wamid.ancient") is False  # forgotten, so treated as new
 
     def test_retried_confirm_does_not_double_save(self, mock_gsheet, monkeypatch):
         """End-to-end shape of the bug: the same 'כן' webhook delivered twice
@@ -468,3 +466,84 @@ class TestWebhookRouteSignature:
         assert resp.status_code == 200
         spies[0].assert_called_once_with("972500000099", "היי", None)
         spies[1].assert_called_once_with("972500000099", "reply")
+
+
+class TestPersistentConversations:
+    """Conversation state lives in Postgres, not process memory: it survives
+    restarts, and every message re-derives a registered worker from the
+    workers table instead of trusting a cached copy."""
+
+    def _fake_gemini(self, monkeypatch, fields: dict):
+        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        response = MagicMock()
+        response.text = json.dumps(fields)
+        model = MagicMock()
+        model.generate_content.return_value = response
+        genai = MagicMock()
+        genai.GenerativeModel.return_value = model
+        monkeypatch.setattr("gadash.ai_extract._genai", genai)
+
+    def test_registration_progress_is_stored_then_cleared(self, mock_gsheet):
+        from gadash import auth
+        from gadash.workers import _add_worker
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        slug = auth.get_tenant_slug(mock_gsheet.tenant_id)
+        phone = "972500000030"
+
+        whatsapp.handle_message(phone, "היי", None)
+        whatsapp.handle_message(phone, slug, None)
+        row = db.session.get(WhatsAppSession, phone)
+        assert row.state == "REGISTER_NAME"
+        assert row.data == {"reg_tenant_id": mock_gsheet.tenant_id}
+
+        whatsapp.handle_message(phone, "דני", None)
+        whatsapp.handle_message(phone, "pw12345", None)
+        assert db.session.get(WhatsAppSession, phone) is None  # registered: nothing pending
+
+    def test_pending_report_is_stored_and_saved_on_confirm(self, mock_gsheet, monkeypatch):
+        from gadash.db import load_work_entries
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000031")
+        self._fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום", "שעות": "2"})
+
+        whatsapp.handle_message("972500000031", "גזמתי אצל גל שעתיים", None)
+        row = db.session.get(WhatsAppSession, "972500000031")
+        assert row.state == "CONFIRM"
+        assert row.data["pending_fields"]["שם לקוח"] == "גל"
+        assert row.data["worker_name"] == "דני"
+
+        assert "נשמר" in whatsapp.handle_message("972500000031", "כן", None)
+        assert db.session.get(WhatsAppSession, "972500000031") is None
+        assert len(load_work_entries(mock_gsheet.tenant_id)) == 1
+
+    def test_stale_confirmation_expires_instead_of_saving(self, mock_gsheet, monkeypatch):
+        """A forgotten pending report must not be saved by a stray "כן" later."""
+        from gadash.db import load_work_entries
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000032")
+        self._fake_gemini(monkeypatch, {"שם לקוח": "גל", "עבודה": "גיזום"})
+        whatsapp.handle_message("972500000032", "גזמתי אצל גל", None)
+
+        row = db.session.get(WhatsAppSession, "972500000032")
+        row.updated_at = datetime.now(timezone.utc) - whatsapp.SESSION_TTL - timedelta(minutes=1)
+        db.session.commit()
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        reply = whatsapp.handle_message("972500000032", "כן", None)
+        assert "נשמר" not in reply
+        assert load_work_entries(mock_gsheet.tenant_id).empty
+        assert db.session.get(WhatsAppSession, "972500000032") is None
+
+    def test_removed_worker_cannot_keep_reporting(self, mock_gsheet, monkeypatch):
+        """Used to keep working until the process restarted, via a cached
+        in-memory session."""
+        from gadash.workers import _add_worker, _delete_worker, _link_worker_whatsapp
+        _add_worker(mock_gsheet.tenant_id, "דני", "pw12345")
+        _link_worker_whatsapp(mock_gsheet.tenant_id, "דני", "972500000033")
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        assert "לא זמין" in whatsapp.handle_message("972500000033", "עבדתי", None)  # recognized
+
+        _delete_worker(mock_gsheet.tenant_id, "דני")
+        assert whatsapp.handle_message("972500000033", "עבדתי", None) == whatsapp.WELCOME_MESSAGE

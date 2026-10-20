@@ -143,3 +143,27 @@ class Subscriber(db.Model):
     id        = db.Column(db.Integer, primary_key=True)
     tenant_id = db.Column(db.Integer, db.ForeignKey("tenants.id"), nullable=False, index=True)
     chat_id   = db.Column(db.BigInteger, nullable=False)
+
+
+class WhatsAppSession(db.Model):
+    """An in-progress WhatsApp conversation (registration steps, or a report
+    waiting for the worker's כן/לא). Keyed by phone number, not tenant: an
+    unregistered number has no tenant yet, and a registered one resolves its
+    tenant through workers.whatsapp_number — the same global-lookup exception
+    as that column. A worker with nothing pending has no row."""
+    __tablename__ = "whatsapp_sessions"
+
+    phone      = db.Column(db.String(20), primary_key=True)
+    state      = db.Column(db.String(20), nullable=False)
+    data       = db.Column(db.JSON, nullable=False, default=dict)
+    updated_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class WhatsAppProcessedMessage(db.Model):
+    """Message ids (wamid) already handled, so Meta's webhook retries are a
+    no-op. Global for the same reason ids are globally unique to Meta; rows
+    are purged after a retention window."""
+    __tablename__ = "whatsapp_processed_messages"
+
+    message_id = db.Column(db.String(200), primary_key=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
