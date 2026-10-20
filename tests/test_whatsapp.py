@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gadash import whatsapp
+from gadash.models import WorkEntry
 from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 
 
@@ -230,6 +231,7 @@ class TestJobReportFlow:
 
         r2 = whatsapp.handle_message("972500000010", "כן", None)
         assert "נשמר" in r2
+        assert "מחק אחרון" in r2  # tells the worker how to undo a mistake
         assert _state("972500000010") == "IDLE"
 
         df = load_work_entries(mock_gsheet.tenant_id)
@@ -547,3 +549,97 @@ class TestPersistentConversations:
 
         _delete_worker(mock_gsheet.tenant_id, "דני")
         assert whatsapp.handle_message("972500000033", "עבדתי", None) == whatsapp.WELCOME_MESSAGE
+
+
+class TestDeleteLast:
+    """"מחק אחרון": a worker removes their own most recent entry, after
+    confirming. Telegram's equivalent deletes the tenant's last row whoever
+    entered it — this must never do that."""
+
+    PHONE = "972500000040"
+
+    def _worker(self, tenant_id, name="דני", phone=PHONE):
+        from gadash.workers import _add_worker, _link_worker_whatsapp
+        _add_worker(tenant_id, name, "pw12345")
+        _link_worker_whatsapp(tenant_id, name, phone)
+
+    def _entry(self, tenant_id, client, by):
+        from gadash.db import append_work_entry
+        append_work_entry(tenant_id, WorkEntry(client=client, date="2026-10-20", task="חריש",
+                                               hours="3", entered_by=by))
+
+    def _clients(self, tenant_id):
+        from gadash.db import load_work_entries
+        return list(load_work_entries(tenant_id)["שם לקוח"])
+
+    def test_nothing_to_delete(self, mock_gsheet):
+        self._worker(mock_gsheet.tenant_id)
+        self._entry(mock_gsheet.tenant_id, "של אורי", "אורי")
+        assert "אין לך רשומות" in whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        assert _state(self.PHONE) == "IDLE"
+
+    def test_deletes_only_own_last_entry_and_only_after_confirming(self, mock_gsheet):
+        from gadash.db import read_audit_log
+        t = mock_gsheet.tenant_id
+        self._worker(t)
+        self._entry(t, "ראשון", "דני")
+        self._entry(t, "אחרון-של-דני", "דני")
+        self._entry(t, "של-אורי", "אורי")  # newest in the tenant, but not his
+
+        ask = whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        assert "אחרון-של-דני" in ask and "של-אורי" not in ask
+        assert _state(self.PHONE) == "CONFIRM_DELETE"
+        assert len(self._clients(t)) == 3  # nothing deleted yet
+
+        done = whatsapp.handle_message(self.PHONE, "כן", None)
+        assert "נמחקה" in done and "אחרון-של-דני" in done
+        assert self._clients(t) == ["ראשון", "של-אורי"]
+        assert _state(self.PHONE) == "IDLE"
+        assert any(e["action"] == "undo" and e["user"] == "דני" for e in read_audit_log(t))
+
+    def test_declining_keeps_the_entry(self, mock_gsheet):
+        t = mock_gsheet.tenant_id
+        self._worker(t)
+        self._entry(t, "x", "דני")
+        whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        assert "נשארה" in whatsapp.handle_message(self.PHONE, "לא", None)
+        assert self._clients(t) == ["x"]
+        assert _state(self.PHONE) == "IDLE"
+
+    def test_unclear_answer_keeps_waiting(self, mock_gsheet):
+        t = mock_gsheet.tenant_id
+        self._worker(t)
+        self._entry(t, "x", "דני")
+        whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        assert "כן" in whatsapp.handle_message(self.PHONE, "אולי", None)
+        assert _state(self.PHONE) == "CONFIRM_DELETE"
+        assert self._clients(t) == ["x"]
+
+    @pytest.mark.parametrize("command", ["מחק אחרון.", "  מחק   אחרון ", "מחק את האחרון!", "מחק את האחרון"])
+    def test_command_wording_variants(self, mock_gsheet, command):
+        t = mock_gsheet.tenant_id
+        self._worker(t)
+        self._entry(t, "x", "דני")
+        assert "למחוק" in whatsapp.handle_message(self.PHONE, command, None)
+        assert _state(self.PHONE) == "CONFIRM_DELETE"
+
+    def test_entry_already_gone_by_confirmation_time(self, mock_gsheet):
+        from gadash.db import delete_work_entry, load_work_entries
+        t = mock_gsheet.tenant_id
+        self._worker(t)
+        self._entry(t, "x", "דני")
+        whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        delete_work_entry(t, int(load_work_entries(t).iloc[0]["_row_id"]))  # e.g. removed on the website
+        assert "כבר לא קיימת" in whatsapp.handle_message(self.PHONE, "כן", None)
+
+    def test_a_same_named_worker_in_another_tenant_is_untouched(self, mock_gsheet):
+        from gadash import auth
+        t = mock_gsheet.tenant_id
+        other = auth.create_tenant("חווה אחרת", "othermgr-x1", "pw123456", slug="other-farm-x1")
+        self._worker(t)
+        self._entry(t, "אצלנו", "דני")
+        self._entry(other, "אצלם", "דני")
+        whatsapp.handle_message(self.PHONE, "מחק אחרון", None)
+        whatsapp.handle_message(self.PHONE, "כן", None)
+        assert self._clients(t) == []
+        assert self._clients(other) == ["אצלם"]

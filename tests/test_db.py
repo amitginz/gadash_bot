@@ -140,6 +140,70 @@ class TestWorkEntries:
             assert "שם לקוח" in df.columns and "_row_id" in df.columns
 
 
+class TestOwnerScopedEntries:
+    """last_work_entry_by / delete_work_entry_by back the worker-facing
+    "delete my last entry" command — ownership has to hold in the DELETE
+    itself, not just in the caller."""
+
+    def _add(self, t, client, by):
+        gdb.append_work_entry(t, WorkEntry(client=client, date="2026-06-01", task="חריש", entered_by=by))
+
+    def test_last_entry_is_the_workers_own_not_the_tenants_last(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            self._add(t1, "ישן של דני", "דני")
+            self._add(t1, "חדש של דני", "דני")
+            self._add(t1, "של אורי", "אורי")  # newest in the tenant
+            assert gdb.last_work_entry_by(t1, "דני")["שם לקוח"] == "חדש של דני"
+
+    def test_name_match_ignores_case_and_surrounding_spaces(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            self._add(t1, "x", "Dani")
+            assert gdb.last_work_entry_by(t1, "  dani ")["שם לקוח"] == "x"
+
+    def test_no_entries_returns_none(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            self._add(t1, "של אורי", "אורי")
+            assert gdb.last_work_entry_by(t1, "דני") is None
+
+    def test_same_name_in_another_tenant_is_not_found(self, app_ctx, tenants):
+        t1, t2 = tenants
+        with app_ctx.app_context():
+            self._add(t2, "אצל קבלן ב", "דני")
+            assert gdb.last_work_entry_by(t1, "דני") is None
+
+    def test_delete_removes_own_row(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            self._add(t1, "x", "דני")
+            row_id = gdb.last_work_entry_by(t1, "דני")["_row_id"]
+            assert gdb.delete_work_entry_by(t1, row_id, "דני") is True
+            assert gdb.load_work_entries(t1).empty
+
+    def test_delete_refuses_someone_elses_row(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            self._add(t1, "של אורי", "אורי")
+            row_id = gdb.last_work_entry_by(t1, "אורי")["_row_id"]
+            assert gdb.delete_work_entry_by(t1, row_id, "דני") is False
+            assert len(gdb.load_work_entries(t1)) == 1
+
+    def test_delete_refuses_a_row_in_another_tenant(self, app_ctx, tenants):
+        t1, t2 = tenants
+        with app_ctx.app_context():
+            self._add(t2, "אצל קבלן ב", "דני")
+            row_id = gdb.last_work_entry_by(t2, "דני")["_row_id"]
+            assert gdb.delete_work_entry_by(t1, row_id, "דני") is False
+            assert len(gdb.load_work_entries(t2)) == 1
+
+    def test_delete_of_a_missing_row_is_false(self, app_ctx, tenants):
+        t1, _ = tenants
+        with app_ctx.app_context():
+            assert gdb.delete_work_entry_by(t1, 987654, "דני") is False
+
+
 class TestFields:
 
     def test_polygon_and_pin_are_isolated_by_tenant(self, app_ctx, tenants):

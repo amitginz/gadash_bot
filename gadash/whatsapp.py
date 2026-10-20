@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from gadash import ai_extract
 from gadash.auth import get_tenant_id_by_slug
+from gadash.db import delete_work_entry_by, last_work_entry_by, log_audit
 from gadash.models import WorkEntry
 from gadash.models_db import WhatsAppProcessedMessage, WhatsAppSession, db
 from gadash.service import create_entry
@@ -227,6 +228,10 @@ def _dispatch(phone: str, session: dict, text: str, audio_bytes: bytes | None) -
         return _step_register_password(phone, session, text)
     if state == "CONFIRM":
         return _step_confirm(session, text)
+    if state == "CONFIRM_DELETE":
+        return _step_confirm_delete(session, text)
+    if _is_delete_last_command(text):
+        return _step_delete_last(session)
     return _step_report(session, text, audio_bytes)
 
 
@@ -263,6 +268,15 @@ def _step_register_password(phone: str, session: dict, text: str) -> str:
     return "סיסמה שגויה. שלח שוב את קוד החברה כדי לנסות מהתחלה."
 
 
+def _format_summary(fields: dict) -> str:
+    """One icon + label line per non-empty field, in FIELD_DISPLAY order.
+    Takes any dict keyed by the Hebrew field names; other keys are ignored."""
+    return "\n".join(
+        f"{emoji} *{label}:* {fields[key]}"
+        for key, (emoji, label) in FIELD_DISPLAY.items() if fields.get(key)
+    )
+
+
 def _step_report(session: dict, text: str, audio_bytes: bytes | None) -> str:
     if not ai_extract.is_available():
         return "🎤 דיווח לא זמין כרגע. נסה שוב מאוחר יותר."
@@ -282,12 +296,8 @@ def _step_report(session: dict, text: str, audio_bytes: bytes | None) -> str:
 
     session["pending_fields"] = fields
     session["state"] = "CONFIRM"
-    summary = "\n".join(
-        f"{FIELD_DISPLAY.get(k, ('•', k))[0]} *{FIELD_DISPLAY.get(k, ('•', k))[1]}:* {v}"
-        for k, v in fields.items() if v
-    )
     return (
-        f"📋 בדוק שהפרטים נכונים:\n\n{summary}\n\n"
+        f"📋 בדוק שהפרטים נכונים:\n\n{_format_summary(fields)}\n\n"
         "משהו לא נכון (למשל סוג העבודה)? שלח *לא* ונסה שוב עם ניסוח ברור יותר.\n"
         "הכל תקין? שלח *כן* לשמירה."
     )
@@ -302,7 +312,7 @@ def _step_confirm(session: dict, text: str) -> str:
         try:
             entry = WorkEntry.from_bot(fields, worker_name)
             create_entry(tenant_id, entry, worker_name)
-            return "✅ נשמר בהצלחה!"
+            return "✅ נשמר בהצלחה!\nטעית? שלח *מחק אחרון*."
         except ValueError as e:
             return f"❌ שגיאת אימות: {e}"
         except Exception as e:
@@ -312,3 +322,44 @@ def _step_confirm(session: dict, text: str) -> str:
         session["state"] = "IDLE"
         return "בוטל."
     return "שלח *כן* לשמירה או *לא* לביטול."
+
+
+_DELETE_LAST_COMMANDS = {"מחק אחרון", "מחק את האחרון"}
+
+
+def _is_delete_last_command(text: str) -> bool:
+    return " ".join(text.rstrip(".!?").split()) in _DELETE_LAST_COMMANDS
+
+
+def _step_delete_last(session: dict) -> str:
+    """Offer to delete the worker's own most recent entry — never anyone
+    else's, which is what Telegram's /undo does (it removes the tenant's last
+    row). Asks first, since this is the one destructive command."""
+    last = last_work_entry_by(session["tenant_id"], session["worker_name"])
+    if last is None:
+        return "אין לך רשומות למחיקה."
+    session["delete_row_id"] = last["_row_id"]
+    session["delete_detail"] = f"{last['שם לקוח']} | {last['תאריך']} | {last['עבודה']}"
+    session["state"] = "CONFIRM_DELETE"
+    return (
+        f"🗑️ למחוק את הרשומה האחרונה שלך?\n\n{_format_summary(last)}\n\n"
+        "שלח *כן* למחיקה או *לא* לביטול."
+    )
+
+
+def _step_confirm_delete(session: dict, text: str) -> str:
+    if text == "כן":
+        tenant_id, worker_name = session["tenant_id"], session["worker_name"]
+        row_id = session.pop("delete_row_id", None)
+        detail = session.pop("delete_detail", "")
+        session["state"] = "IDLE"
+        if row_id is None or not delete_work_entry_by(tenant_id, row_id, worker_name):
+            return "הרשומה כבר לא קיימת."
+        log_audit(tenant_id, "undo", worker_name, detail)
+        return f"✅ הרשומה נמחקה:\n{detail}"
+    if text == "לא":
+        session.pop("delete_row_id", None)
+        session.pop("delete_detail", None)
+        session["state"] = "IDLE"
+        return "בוטל. הרשומה נשארה."
+    return "שלח *כן* למחיקה או *לא* לביטול."

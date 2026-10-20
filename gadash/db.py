@@ -23,6 +23,7 @@ import math
 from datetime import datetime
 
 import pandas as pd
+from sqlalchemy import func
 
 from gadash.models import COLUMNS, VALID_TASKS, WorkEntry
 from gadash.models_db import AuditLogEntry, Field, Rate, Subscriber, Tenant, WorkEntryRow, db
@@ -96,6 +97,40 @@ def edit_work_entry(tenant_id: int, row_id: int, entry: WorkEntry):
 def delete_work_entry(tenant_id: int, row_id: int):
     WorkEntryRow.query.filter_by(tenant_id=tenant_id, id=row_id).delete()
     db.session.commit()
+
+
+def _entered_by_matches(entered_by: str):
+    # Same notion of "mine" as the worker portal's own-entries view: names are
+    # compared trimmed and case-insensitively.
+    return func.lower(func.trim(WorkEntryRow.entered_by)) == entered_by.strip().lower()
+
+
+def last_work_entry_by(tenant_id: int, entered_by: str) -> dict | None:
+    """The most recent entry `entered_by` created in this tenant, as a dict
+    shaped like a load_work_entries row (plus "_row_id"), or None."""
+    r = (WorkEntryRow.query.filter_by(tenant_id=tenant_id).filter(_entered_by_matches(entered_by))
+         .order_by(WorkEntryRow.id.desc()).first())
+    if r is None:
+        return None
+    return {
+        "שם לקוח": r.client, "תאריך": r.date, "עבודה": r.task,
+        "שם חלקה": r.field_name or "", "גידול": r.crop or "",
+        "כמות": r.amount or "", "שעות": r.hours or "",
+        "כלי": r.tool or "", "מפעיל": r.operator or "",
+        "הערות": r.notes or "", "מזין": r.entered_by or "",
+        "_row_id": r.id,
+    }
+
+
+def delete_work_entry_by(tenant_id: int, row_id: int, entered_by: str) -> bool:
+    """Delete one entry only if `entered_by` created it. Unlike
+    delete_work_entry, the ownership check is part of the DELETE itself, so a
+    worker-facing "undo" can never remove someone else's row. False if there
+    was nothing to delete (already gone, or not theirs)."""
+    deleted = (WorkEntryRow.query.filter_by(tenant_id=tenant_id, id=row_id)
+               .filter(_entered_by_matches(entered_by)).delete(synchronize_session=False))
+    db.session.commit()
+    return deleted > 0
 
 
 def bulk_delete_work_entries(tenant_id: int, row_ids: list):
