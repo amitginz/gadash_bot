@@ -988,3 +988,37 @@ class TestTelegramShowsOnlyOwnEntries:
         asyncio.run(bot.bot_edit_select(pick, context))
         reply = self.helpers._replies(pick)[0]
         assert "כבר לא קיימת" in reply and "עוד-של-אורי" not in reply
+
+
+
+class TestNoTelegramReminders:
+    """The 08:00 summary and 18:00 "don't forget to report" messages were
+    removed. Signing in must no longer subscribe anyone to them."""
+
+    def test_starting_the_bot_does_not_subscribe_the_worker(self, mock_gsheet):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+        import gadash.bot as bot
+        from gadash.db import get_subscribers
+        from gadash.workers import _add_worker, _link_worker_telegram
+
+        t = mock_gsheet.tenant_id
+        _add_worker(t, "דני", "pw12345")
+        _link_worker_telegram(t, "דני", 424242)
+        update = MagicMock()
+        update.message.from_user.id = 424242
+        update.message.text = "/start"
+        update.message.reply_text = AsyncMock()
+        context = MagicMock()
+        context.user_data = {}
+
+        assert asyncio.run(bot.start(update, context)) == bot.MENU
+        assert context.user_data["_worker_name"] == "דני"  # signed in as before
+        assert get_subscribers(t) == set()
+
+    def test_no_daily_jobs_are_scheduled(self):
+        import inspect
+        import gadash.bot as bot
+        src = inspect.getsource(bot.start_telegram_bot)
+        assert "run_daily" not in src and "job_queue" not in src
+        assert not hasattr(bot, "_morning_job") and not hasattr(bot, "_evening_job")
