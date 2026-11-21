@@ -1,196 +1,132 @@
 # Gadash Bot — מערכת ניהול עבודות גד"ש
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-gadash--bot.fly.dev-2563eb?style=for-the-badge&logo=fly.io&logoColor=white)](https://gadash-bot.fly.dev/)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
-[![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
+[![Tests](https://github.com/amitginz/gadash_bot/actions/workflows/tests.yml/badge.svg)](https://github.com/amitginz/gadash_bot/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776ab?logo=python&logoColor=white)](https://python.org)
+[![Flask](https://img.shields.io/badge/Flask-2.3-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 
-מערכת לניהול עבודות שדה עבור קבלן חקלאי. עובדי שדה מזינים עבודות דרך **בוט טלגרם** בעברית; מנהלים צופים, עורכים ומייצאים את כל הנתונים מ**לוח בקרה ויבי**. הכול מסתנכרן אוטומטית ל-**Google Sheets**.
+מערכת **multi-tenant** לניהול עבודות שדה חקלאיות (גד"ש) עבור קבלנים. עובדי שדה מדווחים על עבודה בטלגרם, ב**וואטסאפ** (הודעת טקסט או הקלטה קולית שמפוענחת ב-Gemini) או באתר. מנהלים צופים, מסננים, מייצאים ומפיקים דוחות — כולל רווחיות וחיוב ללקוחות.
 
----
+## סטטוס
 
-## פרטי הגשה
+אב-טיפוס עובד שנבדק מקצה לקצה מול מספר בדיקה אמיתי של Meta (רישום עובד, דיווח בטקסט ובקול, תיקון, שמירה), על סביבה מקומית עם מנהרת ngrok. **אין עדיין משתמשים אמיתיים והקוד בענף הזה לא נפרס.**
 
-**קורס:** נושאים מתקדמים בפיתוח תוכנה — סמסטר ב׳ תשפ״ו | **מרצה:** ד״ר איאד סולימאן
-
-**שם הפרויקט:** מערכת ניהול עבודות גד״ש — אתר ובוט טלגרם
-
-**שותפים בפרויקט:**
-
-| שם | ת״ז | אימייל | טלפון |
-|---|---|---|---|
-| עמית גינזבורג | 313393027 | amitginz@gmail.com | 054-3192907 |
-| הדר קלר | 209825512 | hadarkeller@gmail.com | 050-7551810 |
-
-**מאגר Git:** https://github.com/amitginz/gadash_bot
-
-**מסמך סופי (דוח פרויקט מלא):** `gadash_report.docx` (מצורף להגשה)
-
----
-
-## תצוגה חיה
-
-**[gadash-bot.fly.dev](https://gadash-bot.fly.dev/)** — סיסמת מנהל: `gadash2025`
+האתר החי, [gadash-bot.fly.dev](https://gadash-bot.fly.dev/), מריץ את הגרסה הקודמת של הפרויקט: מבוססת Google Sheets, חד-לקוחית ובלי וואטסאפ.
 
 ---
 
 ## ארכיטקטורה
 
 ```
-┌─────────────────────┐     HTTP/JSON      ┌──────────────────────┐
-│   Web Browser       │ ◄────────────────► │   Flask App          │
-│   HTML5 / Jinja2    │                    │   app.py             │
-│   Bootstrap 5 RTL   │                    │                      │
-└─────────────────────┘                    │   gadash/ package    │
-                                           │   ├── models.py      │
-┌─────────────────────┐     async calls    │   ├── sheets.py      │
-│   Telegram App      │ ◄────────────────► │   ├── service.py     │
-│   ConversationBot   │                    │   ├── bot.py         │
-│   16 states         │                    │   ├── audit.py       │
-└─────────────────────┘                    │   └── workers.py     │
-                                           └──────────┬───────────┘
-                                                      │ gspread API
-                                           ┌──────────▼───────────┐
-                                           │   Google Sheets       │
-                                           │   "Gadash Data"       │
-                                           │   6 worksheets        │
-                                           └──────────────────────┘
+  Web (manager / worker)      Telegram bot        WhatsApp (Meta Cloud API)
+            │                       │                         │ HMAC-signed webhook
+            └───────────────────────┼─────────────────────────┘
+                                    ▼
+                         Flask app  (app.py + gadash/)
+             auth · CSRF · routes · bot.py · whatsapp.py · ai_extract.py
+                                    │
+                  gadash/db.py — every query scoped by tenant_id
+                                    │
+                  PostgreSQL  (Alembic migrations)        Gemini (extraction)
 ```
+
+**מודל הנתונים:** `tenants`, `managers`, `workers`, `work_entries`, `fields` (פוליגונים ונעצים), `rates`, `audit_log`, `whatsapp_sessions`, `whatsapp_processed_messages`. כל טבלה פרט ל-`tenants` נושאת `tenant_id`. `subscribers` נשארה מהגרסה הקודמת ואינה בשימוש.
+
+---
+
+## החלטות תכנון עיקריות
+
+- **בידוד בין לקוחות.** כל פונקציה ב-`gadash/db.py` מקבלת `tenant_id` מפורש. היוצא מן הכלל הבא נעשה בכוונה: `telegram_id` ו-`whatsapp_number` ייחודיים גלובלית, כדי שבוט אחד ומספר וואטסאפ אחד ישרתו את כל הלקוחות ויזהו את הלקוח לפי השולח.
+- **מזהי שורה אמיתיים.** הגרסה הקודמת זיהתה רשומה לפי מיקומה בגיליון, מה שמסוכן תחת עריכות מקבילות. כאן המזהה הוא מפתח ראשי של Postgres.
+- **ערוץ וואטסאפ ללא טופס מודרך.** העובד שולח הודעה אחת, בטקסט או בקול, ו-Gemini מחלץ ממנה את השדות. אחרי סיכום עם אייקונים הוא מאשר (`כן`, `אישור`, 👍), מתקן שדה בודד (`שנה שעות ל-5`) או מבטל. המחיקה (`מחק אחרון`) מוגבלת לרשומה האחרונה **של העובד עצמו** ודורשת אישור.
+- **תיקונים לפי כללים ולא עוד קריאה למודל.** פענוח של "שנה X ל-Y" דטרמיניסטי: בלי צריכת מכסה, בלי סיכון שהמודל ישכתב שדות אחרים, עם אימות ערכים (שעות מספר סופי וחיובי, סוג עבודה מתוך הרשימה, תאריכים), וכל תיקון מציג מחדש את הסיכום המלא.
+- **אבטחת ה-webhook.** כל POST מ-Meta נבדק מול `X-Hub-Signature-256` (HMAC-SHA256, השוואה בזמן קבוע); בלי `WHATSAPP_APP_SECRET` כל בקשה נדחית (fail-closed).
+- **אידמפוטנטיות.** Meta מוסרת הודעות לפחות פעם אחת, ולפעמים כמה פעמים. מזהה ההודעה נרשם ב-Postgres עם `INSERT … ON CONFLICT DO NOTHING`, כך ששתי מסירות בו-זמניות לא יכולות שתיהן להחליט שהן הראשונות.
+- **מצב שיחה עמיד.** שיחות פתוחות נשמרות בטבלה ופוקעות אחרי 30 דקות (כדי ש"כן" אקראי יום אחר כך לא ישמור דיווח שנשכח). עובד שהוסר מהמערכת נחסם מיד.
+- **בעלות על רשומות.** מחיקה ותצוגה בבוטים מוגבלות לרשומות של העובד, והבדיקה נעשית בתוך ה-`DELETE` עצמו ולא רק בקוד הקורא.
 
 ---
 
 ## יכולות
 
-### בוט טלגרם
-- שיחה מודרכת בעברית — 16 מצבי שיחה (ConversationHandler)
-- הזנת עבודה ב-12 שלבים: לקוח, תאריך, סוג עבודה, חלקה, גידול, כמות, שעות, כלי, מפעיל, הערות
-- תמיכה בתמונה כהערה
-- `/undo` — ביטול הרשומה האחרונה
-- חיפוש לפי שם לקוח
-- שידורים אוטומטיים: סיכום יומי 08:00, תזכורת 18:00, דוח שבועי בימי שני
+### וואטסאפ
+- הרשמה: קוד חברה, שם עובד וסיסמה; המספר מקושר לעובד
+- דיווח בטקסט חופשי או בהקלטה קולית; 13 סוגי עבודה (חריש, ריסוס, קציר, דיסוק, דישון, השקיה, שתילה, עישוב, בציר, מסיק, גיזום, הדברה, אחר)
+- סיכום לפני שמירה, תיקון שדה, אישור וביטול בניסוח חופשי, ו-`מחק אחרון`
+
+### טלגרם
+- שיחה מודרכת בעברית, הקלטות קוליות, ותמונה כהערה
+- חמש העבודות האחרונות, חיפוש לפי לקוח ובחירת רשומה לעריכה — רק של העובד עצמו
+- `/undo` של הרשומה האחרונה של העובד, עם אישור
 
 ### לוח בקרה למנהל
-- טבלת רשומות עם חיפוש גלובלי, סינון ועריכה מוטבעת
-- Quick-Add modal — הוספה מהירה ללא טעינת דף
-- מחיקה מרובה ושכפול רשומות
-- ייצוא Excel / CSV
-- ייבוא Excel עם deduplication אוטומטי
-- דוח חודשי — 3 גרפים (Chart.js)
-- דוח שעות לפי חלקה / גידול
-- דוח לקוח
-- מפת חלקות (Leaflet.js + GPS מ-Google Sheets)
-- סיכום AI (Gemini 2.5 Flash) — fallback לתבנית עברית
+- טבלת רשומות עם חיפוש, סינון, עריכה מוטבעת, הוספה מהירה, שכפול ומחיקה מרובה
+- ייבוא וייצוא Excel / CSV, ו-API לקריאת הרשומות (`/api/docs`)
+- דוחות: חודשי עם גרפים, לפי חלקה וגידול, לקוח, **סיכום חיוב ללקוח** ו**רווחיות** (תעריפי הכנסה ועלות לכל סוג עבודה)
+- מפת חלקות (Leaflet) עם פוליגונים ונעצים
+- סיכום חודשי ב-Gemini, לוג ביקורת, וניהול עובדים
 
 ### פורטל עובד (`/worker`)
-- טופס הזנה מהיר
-- היסטוריה אישית בלבד
+טופס הזנה מהיר, היסטוריה אישית, ביטול הרשומה האחרונה ושינוי סיסמה.
 
-### אבטחה ותפעול
-- CSRF protection על כל טופס ובקשת AJAX
-- Rate limiting — 5 בקשות/דקה
-- Session timeout — 8 שעות
-- סיסמאות מנהל ועובד — Werkzeug PBKDF2-SHA256
-- לוג ביקורת (audit) — כתיבה כפולה לקובץ + AuditLog sheet
-- cache בזיכרון עם TTL של 5 דקות + threading.Lock
+### אבטחה
+הרשאות ו-hash סיסמאות (Werkzeug) לכל לקוח בנפרד, הגנת CSRF, הגבלת קצב על ההתחברות, פקיעת session אחרי 8 שעות, ולוג ביקורת.
 
 ---
 
-## מבנה הקבצים
+## בעיות אמיתיות שנמצאו בדרך
 
-```
-gadash_bot/
-├── app.py                  # Flask app — routes, auth, CSRF, rate limiting
-├── gadash/
-│   ├── models.py           # WorkEntry dataclass, COLUMNS, VALID_TASKS
-│   ├── sheets.py           # Google Sheets I/O + in-memory cache
-│   ├── service.py          # create_entry() — writes + audit
-│   ├── bot.py              # Telegram ConversationHandler (16 states)
-│   ├── audit.py            # Dual audit log (file + Sheets)
-│   ├── workers.py          # Worker CRUD + password hashing
-│   └── subscribers.py      # Telegram broadcast subscriber list
-├── templates/              # Jinja2 HTML templates
-├── static/                 # CSS, JS, Chart.js
-├── tests/
-│   └── test_app.py         # Flask test client tests
-├── requirements.txt
-├── Dockerfile
-├── fly.toml
-└── Procfile
-```
+אלה לא נתפסו בבדיקות האוטומטיות הראשונות. חלקן עלו בהרצה מול Meta ו-Gemini אמיתיים, וחלקן בסקירת הקוד:
 
----
-
-## Google Sheets — מבנה
-
-| Worksheet | תוכן |
-|---|---|
-| `Sheet1` | נתוני עבודה ראשיים (11 עמודות עבריות) |
-| `Settings` | סיסמאות מנהל ועובד (key-value) |
-| `Workers` | רישום עובדים + password hash + telegram_id |
-| `FieldCoords` | קואורדינטות GPS לפי שם חלקה |
-| `AuditLog` | לוג פעולות (ts, action, user, detail) |
-| `Subscribers` | chat_ids לשידורי הבוט |
-
-עמודות Sheet1:
-```
-שם לקוח | תאריך | עבודה | שם חלקה | גידול | כמות | שעות | כלי | מפעיל | הערות | מזין
-```
+| בעיה | סיבה | תיקון |
+|---|---|---|
+| אותה הודעה נשמרה כמה פעמים | Meta מוסרת מחדש הודעות, גם כפולות בתוך אותה בקשה | דה-דופליקציה לפי מזהה הודעה, אטומית ב-Postgres |
+| כל חילוץ נכשל | `gemini-2.5-flash` הוצא משימוש למפתחות חדשים | מעבר ל-`gemini-3.6-flash` |
+| "בצרתי" נשמר כ"אחר" | בציר ענבים וקציר משורשים שונים, ולכן אין התאמה | קטגוריות נפרדות, ולוג של ניחושים שלא התאימו |
+| שיחה נעלמה באמצע אישור | מצב שיחה בזיכרון התהליך | טבלת שיחות ב-Postgres |
+| `/undo` בטלגרם מחק רשומות של עובדים אחרים | נמחקה השורה האחרונה של הלקוח כולו | מחיקה מוגבלת בעלות ובקשת אישור |
 
 ---
 
 ## התקנה מקומית
 
-### דרישות מקדימות
-
-- Python 3.11+
-- Telegram bot token (מ-[@BotFather](https://t.me/BotFather))
-- Google Cloud service account עם Sheets + Drive API
-- Google Sheet בשם `Gadash Data` משותף עם ה-service account
-
-### הרצה
+דרישות: Python 3.10+ ו-PostgreSQL.
 
 ```bash
 git clone https://github.com/amitginz/gadash_bot.git
 cd gadash_bot
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+createdb gadash_dev
+cp .env.example .env        # ומלא את הערכים
+flask --app app db upgrade
+flask --app app create-tenant "חוות הדגמה" demo1 "בחר-סיסמה" --slug demo
+python app.py               # http://localhost:8080
 ```
 
-צור קובץ `.env`:
+הכניסה: מנהל עם `demo1`; עובדים נוספים מוסיפים מעמוד העובדים, ונכנסים עם קוד החברה (`demo`).
 
-```env
-BOT_TOKEN=your_telegram_token
-GOOGLE_CREDS={"type":"service_account",...}
-SECRET_KEY=your_secret_key
-WEB_PASSWORD=gadash2025
-WORKER_PASSWORD=worker2025
-GEMINI_API_KEY=optional_for_ai_summaries
-```
+### בדיקות
 
 ```bash
-python app.py
+pip install -r requirements-dev.txt
+createdb gadash_test
+DATABASE_URL=postgresql:///gadash_test pytest -q
 ```
 
-הדשבורד זמין ב-`http://localhost:8080`.
+הבדיקות רצות מול Postgres אמיתי (לא mocks), וגם ב-CI עם service container.
 
-### הרצת בדיקות
+### וואטסאפ מקומית
 
-```bash
-pytest tests/ -v
-```
+1. ב-[Meta for Developers](https://developers.facebook.com): אפליקציה עם מקרה השימוש WhatsApp, ומספר בדיקה.
+2. `ngrok http 8080` והגדרת webhook ל-`https://<ngrok>/webhook/whatsapp` עם `WHATSAPP_VERIFY_TOKEN`, וקבלת האירוע `messages`.
+3. מלא ב-`.env`: `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`.
 
----
-
-## פריסה — Fly.io
-
-```bash
-flyctl launch
-flyctl secrets set BOT_TOKEN="..." GOOGLE_CREDS='{"type":"service_account",...}' SECRET_KEY="..."
-flyctl deploy
-```
-
-> חשוב: השתמש ב-`--workers 1` ב-gunicorn — בוט הטלגרם וה-cache בזיכרון אינם multi-process safe.
+מלכודות שנתקלנו בהן:
+- ה-WhatsApp Business Account עשוי להיות מנוי רק לאפליקציית הבדיקה הפנימית של Meta ולא לשלך. בדיקה: `GET /{WABA_ID}/subscribed_apps`, ותיקון: `POST` לאותו נתיב.
+- לפי Meta, אפליקציה לא מפורסמת לא מקבלת webhooks אמיתיים, ופרסום דורש כתובת מדיניות פרטיות. יש כזו ב-`/privacy`.
+- טוקן ה-"Try it out" פג אחרי 24 שעות; יוצרים System User token מ-Business Settings.
+- המכסה החינמית של Gemini הייתה 20 בקשות ליום.
 
 ---
 
@@ -198,21 +134,56 @@ flyctl deploy
 
 | משתנה | תיאור |
 |---|---|
-| `BOT_TOKEN` | טוקן בוט טלגרם |
-| `GOOGLE_CREDS` | JSON של service account (עדיפות על `credentials.json`) |
-| `SECRET_KEY` | Flask session secret |
-| `WEB_PASSWORD` | סיסמת מנהל ראשונית (מוחלף על ידי Settings sheet) |
-| `WORKER_PASSWORD` | סיסמת עובד ראשונית |
-| `WEB_APP_URL` | URL ציבורי — מפעיל Webhook mode בטלגרם |
-| `GEMINI_API_KEY` | מפתח Gemini לסיכומי AI |
-| `PORT` | פורט HTTP (ברירת מחדל 8080) |
+| `DATABASE_URL` | חיבור ל-Postgres (ברירת מחדל `postgresql:///gadash_dev`) |
+| `SECRET_KEY` | מפתח ה-session של Flask |
+| `GEMINI_API_KEY` | חילוץ שדות והסיכום החודשי |
+| `WHATSAPP_VERIFY_TOKEN` | טוקן לאימות ה-webhook, בבחירתך |
+| `WHATSAPP_APP_SECRET` | חתימת ה-webhook; **חובה**, בלעדיו כל POST נדחה |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | שליחה והורדת מדיה |
+| `BOT_TOKEN` | בוט טלגרם (אופציונלי) |
+| `WEB_APP_URL` | כתובת ציבורית; מפעילה webhook בטלגרם |
+| `GOOGLE_CREDS` | רק לסקריפט ההגירה מהגרסה הקודמת |
+| `PORT` | ברירת מחדל 8080 |
+
+## פריסה
+
+`Dockerfile` ו-`fly.toml` מוכנים ל-Fly.io. נקודות שחשוב להכיר:
+
+- gunicorn עם `--workers 1`, כי בוט הטלגרם רץ כ-thread בתוך התהליך. מצב הוואטסאפ כבר ב-Postgres ולכן אינו מגביל.
+- `auto_stop_machines = false`: זיהוי חוסר הפעילות של Fly מסתכל רק על HTTP נכנס, והוא עצר את המכונה באמצע קריאה ל-Gemini.
+- בכל פריסה: `flask db upgrade`, ו-secrets לכל המשתנים שלמעלה.
+- ייבוא נתונים מהגרסה הקודמת: `python scripts/migrate_sheets_to_db.py --name … --username … --password … --slug …` (דורש `GOOGLE_CREDS`)
+
+## מבנה הקוד
+
+```
+app.py                 Flask: routes, auth, CSRF, webhook, CLI (create-tenant)
+gadash/
+  db.py                גישה לנתונים, כל פונקציה ממוקדת tenant_id
+  models_db.py         סכמת SQLAlchemy
+  auth.py, tenancy.py  הרשאות וזיהוי לקוח
+  whatsapp.py          webhook, שיחה, אימות חתימה, דה-דופליקציה
+  bot.py               בוט טלגרם
+  ai_extract.py        חילוץ שדות מטקסט וקול (Gemini)
+  service.py, models.py, workers.py
+  sheets.py            מהגרסה הקודמת; בשימוש רק בסקריפט ההגירה
+migrations/            Alembic
+scripts/               migrate_sheets_to_db.py
+templates/             Jinja2 + Bootstrap RTL
+tests/                 283 בדיקות
+```
+
+## מגבלות ידועות
+
+- וואטסאפ מוגבל למספר הבדיקה ועד 5 נמענים עד שמסיימים Business Verification מול Meta.
+- מצב offline של הגרסה הקודמת לא הועבר ל-Postgres.
+- נתיב הטלגרם נבדק עם אובייקטי Update מדומים, לא מול טלגרם אמיתי בענף הזה.
+- אין קובץ `LICENSE` בריפו.
 
 ---
 
-## Credits
+## קרדיטים
 
-Built with the assistance of [Claude](https://claude.ai) (Anthropic).
+הפרויקט התחיל כעבודת קורס ב"נושאים מתקדמים בפיתוח תוכנה" (סמסטר ב׳ תשפ״ו, ד״ר איאד סולימאן), בשיתוף **עמית גינזבורג** ו**הדר קלר**. מפת החלקות (פוליגונים ונעצים) היא של הדר.
 
-## License
-
-MIT
+הגרסה הרב-לקוחית על Postgres, ערוץ הוואטסאפ והעבודה שאחריהם נעשו על ידי עמית, בסיוע [Claude](https://claude.ai) (Anthropic).
