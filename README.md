@@ -1,21 +1,21 @@
-# Gadash Bot — מערכת ניהול עבודות גד"ש
+# Gadash Bot — Field-Crop Work Management
 
 [![Tests](https://github.com/amitginz/gadash_bot/actions/workflows/tests.yml/badge.svg)](https://github.com/amitginz/gadash_bot/actions/workflows/tests.yml)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776ab?logo=python&logoColor=white)](https://python.org)
 [![Flask](https://img.shields.io/badge/Flask-2.3-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 
-מערכת **multi-tenant** לניהול עבודות שדה חקלאיות (גד"ש) עבור קבלנים. עובדי שדה מדווחים על עבודה בטלגרם, ב**וואטסאפ** (הודעת טקסט או הקלטה קולית שמפוענחת ב-Gemini) או באתר. מנהלים צופים, מסננים, מייצאים ומפיקים דוחות — כולל רווחיות וחיוב ללקוחות.
+A **multi-tenant** system for agricultural contractors to manage field work (Hebrew: *gadash*, field crops). Field workers report jobs through Telegram, **WhatsApp** (a typed message or a voice note, parsed by Gemini), or the website. Managers browse, filter and export entries and get reports, including profitability and client billing. The UI and bots are in Hebrew.
 
-## סטטוס
+## Status
 
-אב-טיפוס עובד שנבדק מקצה לקצה מול מספר בדיקה אמיתי של Meta (רישום עובד, דיווח בטקסט ובקול, תיקון, שמירה), על סביבה מקומית עם מנהרת ngrok. **אין עדיין משתמשים אמיתיים והקוד בענף הזה לא נפרס.**
+A working prototype, tested end to end against a real Meta WhatsApp test number: worker registration, reporting by text and by voice, corrections, and saving. It ran on a local machine behind an ngrok tunnel. **There are no real users yet, and the code on this branch is not deployed.**
 
-האתר החי, [gadash-bot.fly.dev](https://gadash-bot.fly.dev/), מריץ את הגרסה הקודמת של הפרויקט: מבוססת Google Sheets, חד-לקוחית ובלי וואטסאפ.
+The live site, [gadash-bot.fly.dev](https://gadash-bot.fly.dev/), runs the earlier version of the project: Google Sheets backend, single tenant, no WhatsApp.
 
 ---
 
-## ארכיטקטורה
+## Architecture
 
 ```
   Web (manager / worker)      Telegram bot        WhatsApp (Meta Cloud API)
@@ -30,67 +30,67 @@
                   PostgreSQL  (Alembic migrations)        Gemini (extraction)
 ```
 
-**מודל הנתונים:** `tenants`, `managers`, `workers`, `work_entries`, `fields` (פוליגונים ונעצים), `rates`, `audit_log`, `whatsapp_sessions`, `whatsapp_processed_messages`. כל טבלה פרט ל-`tenants` נושאת `tenant_id`. `subscribers` נשארה מהגרסה הקודמת ואינה בשימוש.
+**Data model:** `tenants`, `managers`, `workers`, `work_entries`, `fields` (polygons and pins), `rates`, `audit_log`, `whatsapp_sessions`, `whatsapp_processed_messages`. Every table except `tenants` carries a `tenant_id`. `subscribers` is left over from the earlier version and unused.
 
 ---
 
-## החלטות תכנון עיקריות
+## Key design decisions
 
-- **בידוד בין לקוחות.** כל פונקציה ב-`gadash/db.py` מקבלת `tenant_id` מפורש. היוצא מן הכלל הבא נעשה בכוונה: `telegram_id` ו-`whatsapp_number` ייחודיים גלובלית, כדי שבוט אחד ומספר וואטסאפ אחד ישרתו את כל הלקוחות ויזהו את הלקוח לפי השולח.
-- **מזהי שורה אמיתיים.** הגרסה הקודמת זיהתה רשומה לפי מיקומה בגיליון, מה שמסוכן תחת עריכות מקבילות. כאן המזהה הוא מפתח ראשי של Postgres.
-- **ערוץ וואטסאפ ללא טופס מודרך.** העובד שולח הודעה אחת, בטקסט או בקול, ו-Gemini מחלץ ממנה את השדות. אחרי סיכום עם אייקונים הוא מאשר (`כן`, `אישור`, 👍), מתקן שדה בודד (`שנה שעות ל-5`) או מבטל. המחיקה (`מחק אחרון`) מוגבלת לרשומה האחרונה **של העובד עצמו** ודורשת אישור.
-- **תיקונים לפי כללים ולא עוד קריאה למודל.** פענוח של "שנה X ל-Y" דטרמיניסטי: בלי צריכת מכסה, בלי סיכון שהמודל ישכתב שדות אחרים, עם אימות ערכים (שעות מספר סופי וחיובי, סוג עבודה מתוך הרשימה, תאריכים), וכל תיקון מציג מחדש את הסיכום המלא.
-- **אבטחת ה-webhook.** כל POST מ-Meta נבדק מול `X-Hub-Signature-256` (HMAC-SHA256, השוואה בזמן קבוע); בלי `WHATSAPP_APP_SECRET` כל בקשה נדחית (fail-closed).
-- **אידמפוטנטיות.** Meta מוסרת הודעות לפחות פעם אחת, ולפעמים כמה פעמים. מזהה ההודעה נרשם ב-Postgres עם `INSERT … ON CONFLICT DO NOTHING`, כך ששתי מסירות בו-זמניות לא יכולות שתיהן להחליט שהן הראשונות.
-- **מצב שיחה עמיד.** שיחות פתוחות נשמרות בטבלה ופוקעות אחרי 30 דקות (כדי ש"כן" אקראי יום אחר כך לא ישמור דיווח שנשכח). עובד שהוסר מהמערכת נחסם מיד.
-- **בעלות על רשומות.** מחיקה ותצוגה בבוטים מוגבלות לרשומות של העובד, והבדיקה נעשית בתוך ה-`DELETE` עצמו ולא רק בקוד הקורא.
-
----
-
-## יכולות
-
-### וואטסאפ
-- הרשמה: קוד חברה, שם עובד וסיסמה; המספר מקושר לעובד
-- דיווח בטקסט חופשי או בהקלטה קולית; 13 סוגי עבודה (חריש, ריסוס, קציר, דיסוק, דישון, השקיה, שתילה, עישוב, בציר, מסיק, גיזום, הדברה, אחר)
-- סיכום לפני שמירה, תיקון שדה, אישור וביטול בניסוח חופשי, ו-`מחק אחרון`
-
-### טלגרם
-- שיחה מודרכת בעברית, הקלטות קוליות, ותמונה כהערה
-- חמש העבודות האחרונות, חיפוש לפי לקוח ובחירת רשומה לעריכה — רק של העובד עצמו
-- `/undo` של הרשומה האחרונה של העובד, עם אישור
-
-### לוח בקרה למנהל
-- טבלת רשומות עם חיפוש, סינון, עריכה מוטבעת, הוספה מהירה, שכפול ומחיקה מרובה
-- ייבוא וייצוא Excel / CSV, ו-API לקריאת הרשומות (`/api/docs`)
-- דוחות: חודשי עם גרפים, לפי חלקה וגידול, לקוח, **סיכום חיוב ללקוח** ו**רווחיות** (תעריפי הכנסה ועלות לכל סוג עבודה)
-- מפת חלקות (Leaflet) עם פוליגונים ונעצים
-- סיכום חודשי ב-Gemini, לוג ביקורת, וניהול עובדים
-
-### פורטל עובד (`/worker`)
-טופס הזנה מהיר, היסטוריה אישית, ביטול הרשומה האחרונה ושינוי סיסמה.
-
-### אבטחה
-הרשאות ו-hash סיסמאות (Werkzeug) לכל לקוח בנפרד, הגנת CSRF, הגבלת קצב על ההתחברות, פקיעת session אחרי 8 שעות, ולוג ביקורת.
+- **Tenant isolation.** Every function in `gadash/db.py` takes an explicit `tenant_id`. The one deliberate exception: `telegram_id` and `whatsapp_number` are globally unique, so a single bot and a single WhatsApp number can serve every tenant and identify the tenant from the sender.
+- **Real row ids.** The earlier version identified a row by its position in the sheet, which is unsafe under concurrent edits. Here the id is a Postgres primary key.
+- **WhatsApp without a guided form.** The worker sends one message, text or voice, and Gemini extracts the fields. After a summary with icons, the worker confirms (`כן`, `אישור`, 👍), corrects a single field (`שנה שעות ל-5`, "change hours to 5"), or cancels. Deletion (`מחק אחרון`, "delete last") only ever offers the **worker's own** most recent entry and asks first.
+- **Rule-based corrections, not another model call.** Parsing "change X to Y" is deterministic: no quota spent, no risk of the model rewriting other fields, validated values (hours must be a finite number above 0, the task must be one of the known types, dates are checked), and every correction re-shows the full summary.
+- **Webhook security.** Every POST from Meta is checked against `X-Hub-Signature-256` (HMAC-SHA256, constant-time comparison). Without `WHATSAPP_APP_SECRET` every request is rejected (fail closed).
+- **Idempotency.** Meta delivers webhooks at least once, and sometimes several times. Message ids are recorded in Postgres with `INSERT … ON CONFLICT DO NOTHING`, so two simultaneous deliveries cannot both decide they were first.
+- **Durable conversation state.** Open conversations live in a table and expire after 30 minutes, so a stray "yes" a day later cannot save a forgotten report. A worker removed from the system is blocked immediately.
+- **Ownership of entries.** Deleting and listing entries in the bots is limited to the worker's own rows, and the ownership check is part of the `DELETE` statement itself, not just the calling code.
 
 ---
 
-## בעיות אמיתיות שנמצאו בדרך
+## Features
 
-אלה לא נתפסו בבדיקות האוטומטיות הראשונות. חלקן עלו בהרצה מול Meta ו-Gemini אמיתיים, וחלקן בסקירת הקוד:
+### WhatsApp
+- Registration with company code, worker name and password; the number is then linked to the worker
+- Reporting by free text or voice note; 13 task types: plowing (חריש), spraying (ריסוס), harvest (קציר), disking (דיסוק), fertilizing (דישון), irrigation (השקיה), planting (שתילה), weeding (עישוב), grape harvest (בציר), olive harvest (מסיק), pruning (גיזום), pest control (הדברה), other (אחר)
+- Summary before saving, single-field correction, natural-language confirm and cancel, and delete-last
 
-| בעיה | סיבה | תיקון |
+### Telegram
+- Guided conversation in Hebrew, voice notes, and a photo as a note
+- Last five entries, search by client, and an edit picker, all limited to the worker's own entries
+- `/undo` for the worker's own last entry, with confirmation
+
+### Manager dashboard
+- Entries table with search, filtering, inline editing, quick add, duplicate, and bulk delete
+- Excel / CSV import and export, and a read API (`/api/docs`)
+- Reports: monthly with charts, by field and crop, per client, a **client billing summary**, and **profitability** (revenue and cost rates per task type)
+- Field map (Leaflet) with polygons and pins
+- Monthly summary written by Gemini, an audit log, and worker management
+
+### Worker portal (`/worker`)
+A quick entry form, personal history, undo of the last entry, and password change.
+
+### Security
+Per-tenant manager and worker accounts with hashed passwords (Werkzeug), CSRF protection, login rate limiting, an 8-hour session timeout, and an audit log.
+
+---
+
+## Real problems found along the way
+
+These were not caught by the first automated tests. Some surfaced running against real Meta and Gemini, others in code review:
+
+| Problem | Cause | Fix |
 |---|---|---|
-| אותה הודעה נשמרה כמה פעמים | Meta מוסרת מחדש הודעות, גם כפולות בתוך אותה בקשה | דה-דופליקציה לפי מזהה הודעה, אטומית ב-Postgres |
-| כל חילוץ נכשל | `gemini-2.5-flash` הוצא משימוש למפתחות חדשים | מעבר ל-`gemini-3.6-flash` |
-| "בצרתי" נשמר כ"אחר" | בציר ענבים וקציר משורשים שונים, ולכן אין התאמה | קטגוריות נפרדות, ולוג של ניחושים שלא התאימו |
-| שיחה נעלמה באמצע אישור | מצב שיחה בזיכרון התהליך | טבלת שיחות ב-Postgres |
-| `/undo` בטלגרם מחק רשומות של עובדים אחרים | נמחקה השורה האחרונה של הלקוח כולו | מחיקה מוגבלת בעלות ובקשת אישור |
+| The same message was saved several times | Meta redelivers webhooks, even duplicates inside a single request | Deduplication by message id, atomic in Postgres |
+| Every extraction failed | `gemini-2.5-flash` was retired for new API keys | Moved to `gemini-3.6-flash` |
+| "בצרתי" (I harvested grapes) was saved as "other" | Grape harvest and general harvest come from different Hebrew roots, so there was no match | Separate task types, plus logging of guesses that matched nothing |
+| A conversation vanished mid-confirmation | State lived in process memory | A conversations table in Postgres |
+| Telegram `/undo` deleted other workers' entries | It deleted the whole tenant's last row | Ownership-scoped delete with confirmation |
 
 ---
 
-## התקנה מקומית
+## Local setup
 
-דרישות: Python 3.10+ ו-PostgreSQL.
+Requires Python 3.10+ and PostgreSQL.
 
 ```bash
 git clone https://github.com/amitginz/gadash_bot.git
@@ -98,15 +98,15 @@ cd gadash_bot
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 createdb gadash_dev
-cp .env.example .env        # ומלא את הערכים
+cp .env.example .env        # then fill in the values
 flask --app app db upgrade
-flask --app app create-tenant "חוות הדגמה" demo1 "בחר-סיסמה" --slug demo
+flask --app app create-tenant "Demo Farm" demo1 "choose-a-password" --slug demo
 python app.py               # http://localhost:8080
 ```
 
-הכניסה: מנהל עם `demo1`; עובדים נוספים מוסיפים מעמוד העובדים, ונכנסים עם קוד החברה (`demo`).
+Sign in as the manager with `demo1`. Add workers from the Workers page; workers sign in with the company code (`demo`).
 
-### בדיקות
+### Tests
 
 ```bash
 pip install -r requirements-dev.txt
@@ -114,76 +114,76 @@ createdb gadash_test
 DATABASE_URL=postgresql:///gadash_test pytest -q
 ```
 
-הבדיקות רצות מול Postgres אמיתי (לא mocks), וגם ב-CI עם service container.
+Tests run against a real Postgres (no mocks), including in CI via a service container.
 
-### וואטסאפ מקומית
+### WhatsApp locally
 
-1. ב-[Meta for Developers](https://developers.facebook.com): אפליקציה עם מקרה השימוש WhatsApp, ומספר בדיקה.
-2. `ngrok http 8080` והגדרת webhook ל-`https://<ngrok>/webhook/whatsapp` עם `WHATSAPP_VERIFY_TOKEN`, וקבלת האירוע `messages`.
-3. מלא ב-`.env`: `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`.
+1. In [Meta for Developers](https://developers.facebook.com): create an app with the WhatsApp use case and a test number.
+2. Run `ngrok http 8080`, set the webhook to `https://<ngrok>/webhook/whatsapp` with your `WHATSAPP_VERIFY_TOKEN`, and subscribe to the `messages` event.
+3. Fill in `.env`: `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_APP_SECRET`.
 
-מלכודות שנתקלנו בהן:
-- ה-WhatsApp Business Account עשוי להיות מנוי רק לאפליקציית הבדיקה הפנימית של Meta ולא לשלך. בדיקה: `GET /{WABA_ID}/subscribed_apps`, ותיקון: `POST` לאותו נתיב.
-- לפי Meta, אפליקציה לא מפורסמת לא מקבלת webhooks אמיתיים, ופרסום דורש כתובת מדיניות פרטיות. יש כזו ב-`/privacy`.
-- טוקן ה-"Try it out" פג אחרי 24 שעות; יוצרים System User token מ-Business Settings.
-- המכסה החינמית של Gemini הייתה 20 בקשות ליום.
+Pitfalls we hit:
+- The WhatsApp Business Account may be subscribed only to Meta's internal test app and not to yours. Check with `GET /{WABA_ID}/subscribed_apps` and fix with a `POST` to the same path.
+- According to Meta, an unpublished app does not receive real webhooks, and publishing requires a privacy policy URL. There is one at `/privacy`.
+- The "Try it out" token expires after 24 hours; create a System User token in Business Settings.
+- The free Gemini quota was 20 requests per day.
 
 ---
 
-## משתני סביבה
+## Environment variables
 
-| משתנה | תיאור |
+| Variable | Description |
 |---|---|
-| `DATABASE_URL` | חיבור ל-Postgres (ברירת מחדל `postgresql:///gadash_dev`) |
-| `SECRET_KEY` | מפתח ה-session של Flask |
-| `GEMINI_API_KEY` | חילוץ שדות והסיכום החודשי |
-| `WHATSAPP_VERIFY_TOKEN` | טוקן לאימות ה-webhook, בבחירתך |
-| `WHATSAPP_APP_SECRET` | חתימת ה-webhook; **חובה**, בלעדיו כל POST נדחה |
-| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | שליחה והורדת מדיה |
-| `BOT_TOKEN` | בוט טלגרם (אופציונלי) |
-| `WEB_APP_URL` | כתובת ציבורית; מפעילה webhook בטלגרם |
-| `GOOGLE_CREDS` | רק לסקריפט ההגירה מהגרסה הקודמת |
-| `PORT` | ברירת מחדל 8080 |
+| `DATABASE_URL` | Postgres connection (default `postgresql:///gadash_dev`) |
+| `SECRET_KEY` | Flask session key |
+| `GEMINI_API_KEY` | Field extraction and the monthly summary |
+| `WHATSAPP_VERIFY_TOKEN` | Webhook verification token, of your choosing |
+| `WHATSAPP_APP_SECRET` | Webhook signature key; **required**, without it every POST is rejected |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Sending messages and downloading media |
+| `BOT_TOKEN` | Telegram bot (optional) |
+| `WEB_APP_URL` | Public URL; enables Telegram webhook mode |
+| `GOOGLE_CREDS` | Only for the migration script from the earlier version |
+| `PORT` | Default 8080 |
 
-## פריסה
+## Deployment
 
-`Dockerfile` ו-`fly.toml` מוכנים ל-Fly.io. נקודות שחשוב להכיר:
+The `Dockerfile` and `fly.toml` are set up for Fly.io. Things worth knowing:
 
-- gunicorn עם `--workers 1`, כי בוט הטלגרם רץ כ-thread בתוך התהליך. מצב הוואטסאפ כבר ב-Postgres ולכן אינו מגביל.
-- `auto_stop_machines = false`: זיהוי חוסר הפעילות של Fly מסתכל רק על HTTP נכנס, והוא עצר את המכונה באמצע קריאה ל-Gemini.
-- בכל פריסה: `flask db upgrade`, ו-secrets לכל המשתנים שלמעלה.
-- ייבוא נתונים מהגרסה הקודמת: `python scripts/migrate_sheets_to_db.py --name … --username … --password … --slug …` (דורש `GOOGLE_CREDS`)
+- gunicorn runs with `--workers 1` because the Telegram bot runs as a thread inside the process. WhatsApp state is already in Postgres, so it is not a constraint.
+- `auto_stop_machines = false`: Fly's idle detection only watches inbound HTTP, and it stopped the machine in the middle of a Gemini call.
+- On every deploy: run `flask db upgrade`, and set secrets for all the variables above.
+- Importing data from the earlier version: `python scripts/migrate_sheets_to_db.py --name … --username … --password … --slug …` (requires `GOOGLE_CREDS`)
 
-## מבנה הקוד
+## Code layout
 
 ```
 app.py                 Flask: routes, auth, CSRF, webhook, CLI (create-tenant)
 gadash/
-  db.py                גישה לנתונים, כל פונקציה ממוקדת tenant_id
-  models_db.py         סכמת SQLAlchemy
-  auth.py, tenancy.py  הרשאות וזיהוי לקוח
-  whatsapp.py          webhook, שיחה, אימות חתימה, דה-דופליקציה
-  bot.py               בוט טלגרם
-  ai_extract.py        חילוץ שדות מטקסט וקול (Gemini)
+  db.py                data access, every function scoped by tenant_id
+  models_db.py         SQLAlchemy schema
+  auth.py, tenancy.py  authentication and tenant resolution
+  whatsapp.py          webhook, conversation, signature check, deduplication
+  bot.py               Telegram bot
+  ai_extract.py        field extraction from text and voice (Gemini)
   service.py, models.py, workers.py
-  sheets.py            מהגרסה הקודמת; בשימוש רק בסקריפט ההגירה
+  sheets.py            from the earlier version; used only by the migration script
 migrations/            Alembic
 scripts/               migrate_sheets_to_db.py
 templates/             Jinja2 + Bootstrap RTL
-tests/                 283 בדיקות
+tests/                 283 tests
 ```
 
-## מגבלות ידועות
+## Known limitations
 
-- וואטסאפ מוגבל למספר הבדיקה ועד 5 נמענים עד שמסיימים Business Verification מול Meta.
-- מצב offline של הגרסה הקודמת לא הועבר ל-Postgres.
-- נתיב הטלגרם נבדק עם אובייקטי Update מדומים, לא מול טלגרם אמיתי בענף הזה.
-- אין קובץ `LICENSE` בריפו.
+- WhatsApp is limited to the test number and up to 5 recipients until Meta Business Verification is completed.
+- The earlier version's offline mode was not ported to Postgres.
+- The Telegram path was tested with mock Update objects, not against real Telegram, on this branch.
+- There is no `LICENSE` file in the repository.
 
 ---
 
-## קרדיטים
+## Credits
 
-הפרויקט התחיל כעבודת קורס ב"נושאים מתקדמים בפיתוח תוכנה" (סמסטר ב׳ תשפ״ו, ד״ר איאד סולימאן), בשיתוף **עמית גינזבורג** ו**הדר קלר**. מפת החלקות (פוליגונים ונעצים) היא של הדר.
+The project began as a coursework project for "Advanced Topics in Software Development" (Semester B, 2026), by **Amit Ginzberg** and **Hadar Keller**. The field map (polygons and pins) is Hadar's.
 
-הגרסה הרב-לקוחית על Postgres, ערוץ הוואטסאפ והעבודה שאחריהם נעשו על ידי עמית, בסיוע [Claude](https://claude.ai) (Anthropic).
+The multi-tenant Postgres version, the WhatsApp channel, and the work after them were done by Amit with the assistance of [Claude](https://claude.ai) (Anthropic).
