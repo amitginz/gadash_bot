@@ -5,6 +5,8 @@
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com)
 [![License](https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge)](LICENSE)
 
+> **הגרסה המתוארת כאן היא הקודמת (Google Sheets, חד-לקוחית).** הגרסה העדכנית, עם Postgres רב-לקוחי וערוץ וואטסאפ, נמצאת בענף [`feature/postgres-multitenant`](https://github.com/amitginz/gadash_bot/tree/feature/postgres-multitenant).
+
 מערכת לניהול עבודות שדה עבור קבלן חקלאי. עובדי שדה מזינים עבודות דרך **בוט טלגרם** בעברית; מנהלים צופים, עורכים ומייצאים את כל הנתונים מ**לוח בקרה ויבי**. הכול מסתנכרן אוטומטית ל-**Google Sheets**.
 
 ---
@@ -15,12 +17,7 @@
 
 **שם הפרויקט:** מערכת ניהול עבודות גד״ש — אתר ובוט טלגרם
 
-**שותפים בפרויקט:**
-
-| שם | ת״ז | אימייל | טלפון |
-|---|---|---|---|
-| עמית גינזבורג | 313393027 | amitginz@gmail.com | 054-3192907 |
-| הדר קלר | 209825512 | hadarkeller@gmail.com | 050-7551810 |
+**שותפים בפרויקט:** עמית גינזבורג, הדר קלר
 
 **מאגר Git:** https://github.com/amitginz/gadash_bot
 
@@ -30,7 +27,7 @@
 
 ## תצוגה חיה
 
-**[gadash-bot.fly.dev](https://gadash-bot.fly.dev/)** — סיסמת מנהל: `gadash2025`
+**[gadash-bot.fly.dev](https://gadash-bot.fly.dev/)**
 
 ---
 
@@ -163,8 +160,8 @@ pip install -r requirements.txt
 BOT_TOKEN=your_telegram_token
 GOOGLE_CREDS={"type":"service_account",...}
 SECRET_KEY=your_secret_key
-WEB_PASSWORD=gadash2025
-WORKER_PASSWORD=worker2025
+WEB_PASSWORD=choose_an_admin_password
+WORKER_PASSWORD=choose_a_worker_password
 GEMINI_API_KEY=optional_for_ai_summaries
 ```
 
